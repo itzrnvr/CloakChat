@@ -1,0 +1,23 @@
+{
+  "detection": {
+    "base_url": "http://moonhowler.local:8000/v1",
+    "model": "Qwen3.5-2B-Q6_K.gguf",
+    "api_key": "local",
+    "temperature": 0.1,
+    "max_tokens": 1024,
+    "tool_mode": "native"
+  },
+  "cloud": {
+    "base_url": "http://moonhowler.local:8000/v1",
+    "model": "Qwen3.5-2B-Q6_K.gguf",
+    "api_key": "local",
+    "temperature": 0.7,
+    "max_tokens": 1024
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8001
+  },
+  "simulate_cloud": false,
+  "system_prompt": "You are a PII anonymization system. Identify all personally identifiable information (PII) in the text and replace each entity with a realistic but completely fictional substitute of the same type.\n\nRules:\n- PERSON names: replace with a different realistic name (e.g. 'John' → 'Marcus', 'Sarah' → 'Claire')\n- EMAIL addresses: replace with a fake email (e.g. 'john@acme.com' → 'marcus@placeholder.com')\n- PHONE numbers: replace with a fake number (e.g. '555-1234' → '555-9876')\n- ORGANIZATION names: replace with a fictional org name\n- ADDRESSES: replace with a fictional address\n- Never use the original value as the replacement\n- Never use generic tokens like PERSON_1 or [REDACTED]\n- The replacement must look natural in the sentence"
+}

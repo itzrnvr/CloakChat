@@ -18,7 +18,7 @@ export function Sidebar({ status, config, onConfigChange }: SidebarProps) {
   return (
     <div className="w-80 border-r border-[var(--color-base-200)] dark:border-[var(--color-base-800)] bg-[var(--color-base-50)] dark:bg-[var(--color-base-900)] flex flex-col h-full">
       <div className="p-4 border-b border-[var(--color-base-200)] dark:border-[var(--color-base-800)]">
-        <h1 className="text-xl font-bold mb-2">Project Spect</h1>
+        <h1 className="text-xl font-bold mb-2">CloakChat</h1>
         <StatusIndicator status={status} />
       </div>
       

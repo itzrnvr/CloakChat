@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.config import load_config
 from backend.routes import chat, config
 
-app = FastAPI(title="Project Spect", description="Privacy-preserving AI chat", version="1.0.0")
+app = FastAPI(title="CloakChat", description="Privacy-preserving AI chat", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,

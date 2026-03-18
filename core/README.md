@@ -1,6 +1,6 @@
 # Core Package
 
-The `core` package is the heart of Project Spect's anonymization system. It provides a pure Python implementation of the PII detection and anonymization pipeline that can be used independently of the FastAPI backend.
+The `core` package is the heart of CloakChat's anonymization system. It provides a pure Python implementation of the PII detection and anonymization pipeline that can be used independently of the FastAPI backend.
 
 ## Installation
 
@@ -8,7 +8,7 @@ The core package is part of the project and doesn't require separate installatio
 
 ```python
 import sys
-sys.path.insert(0, '/path/to/project-spect')
+sys.path.insert(0, '/path/to/cloakchat')
 from core import anonymize, get_strategy, list_strategies
 ```
 

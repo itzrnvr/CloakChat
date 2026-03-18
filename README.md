@@ -1,4 +1,4 @@
-# Project Spect
+# CloakChat
 
 A privacy-preserving AI chat system that detects and anonymizes PII **locally** before sending anything to a cloud LLM, then reconstructs the response — keeping sensitive data entirely off third-party servers.
 
@@ -139,7 +139,7 @@ CLOUD_BASE_URL=...
 ## Project Structure
 
 ```
-project-spect/
+cloakchat/
 ├── backend/
 │   ├── main.py          # FastAPI app, CORS, uvicorn entrypoint
 │   ├── config.py        # Loads config.json + env var overrides

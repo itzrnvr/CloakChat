@@ -1,3 +1,3 @@
 """
-Backend for Project Spect.
+Backend for CloakChat.
 """

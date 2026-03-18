@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Project Spect - Start Script
+# CloakChat - Start Script
 # Starts both backend and frontend servers
 
 set -e
@@ -9,7 +9,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_PORT=8001
 FRONTEND_PORT=5173
 
-echo "🚀 Starting Project Spect"
+echo "🚀 Starting CloakChat"
 echo "========================"
 echo ""
 

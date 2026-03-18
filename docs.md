@@ -1,4 +1,4 @@
-# Project Spect — Documentation
+# CloakChat — Documentation
 
 Privacy-preserving AI chat: anonymize PII before sending to a cloud LLM, then reconstruct the response. Supports multi-turn conversations while keeping all PII local.
 

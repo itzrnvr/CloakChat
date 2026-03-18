@@ -66,4 +66,5 @@ htmlcov/
 *.tmp
 .cache/
 
-
+# Archive
+.archive/

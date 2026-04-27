@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AppState, TraceGroup, AppConfig } from '@/types'
+import type { AppState, TraceGroup, AppConfig, Session, SessionSummary } from '@/types'
 
 const DEFAULT_CONFIG: AppConfig = {
   detection: {
@@ -28,12 +28,14 @@ export const useAppStore = create<AppState>((set) => ({
   traceEvents: [],
   traceGroups: [],
   currentRequestId: null,
+  currentSessionId: null,
   cloudStreamingContent: "",
   config: DEFAULT_CONFIG,
   status: "ready",
   statusMessage: undefined,
   anonymizedHistory: [],
   entityMap: {},
+  sessions: [],
 
   addMessage: (message) => set((state) => ({
     messages: [...state.messages, message]
@@ -52,7 +54,6 @@ export const useAppStore = create<AppState>((set) => ({
       const group = updatedGroups[currentGroupIndex]
       group.events = [...group.events, newEvent]
 
-      // Extract PII count — content is the full flat event object
       if (event.type === 'detection') {
         const ev = event.content as { replacements?: unknown[] }
         group.summary.piiCount = ev?.replacements?.length ?? 0
@@ -126,5 +127,26 @@ export const useAppStore = create<AppState>((set) => ({
     cloudStreamingContent: "",
     anonymizedHistory: [],
     entityMap: {},
-  })
+  }),
+
+  setSessions: (sessions: SessionSummary[]) => set({ sessions }),
+
+  loadSessionData: (session: Session) => set({
+    messages: session.messages,
+    traceEvents: [],
+    traceGroups: session.traceGroups,
+    currentRequestId: null,
+    cloudStreamingContent: "",
+    anonymizedHistory: session.anonymizedHistory,
+    entityMap: session.entityMap,
+  }),
+
+  updateSessionTitle: (title: string) => set((state) => {
+    const updated = state.sessions.map(s =>
+      s.id === state.currentSessionId ? { ...s, title } : s
+    )
+    return { sessions: updated }
+  }),
+
+  setCurrentSessionId: (id: string | null) => set({ currentSessionId: id }),
 }))

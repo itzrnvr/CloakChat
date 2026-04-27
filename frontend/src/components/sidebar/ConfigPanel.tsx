@@ -19,6 +19,7 @@ export function ConfigPanel({ config, onConfigChange }: ConfigPanelProps) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     detection: true,
     cloud: true,
+    prompts: false,
     testing: false,
   })
 
@@ -119,6 +120,39 @@ export function ConfigPanel({ config, onConfigChange }: ConfigPanelProps) {
                 onChange={(e) => updateCloud({ api_key: e.target.value })}
                 placeholder="Enter API Key"
                 className="h-8 text-xs font-mono"
+              />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* Prompts */}
+        <Collapsible open={openSections.prompts} onOpenChange={() => toggleSection("prompts")}>
+          <CollapsibleTrigger className="flex w-full items-center justify-between py-2 font-semibold border-b">
+            <div className="flex items-center gap-2">
+              <ChevronDown className={cn("h-4 w-4 transition-transform", !openSections.prompts && "-rotate-90")} />
+              📝 Prompts & Context
+            </div>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-4 space-y-4">
+            <div className="space-y-2">
+              <Label className="text-xs">System Prompt</Label>
+              <textarea
+                value={localConfig.system_prompt || ""}
+                onChange={(e) => setLocalConfig(prev => ({ ...prev, system_prompt: e.target.value }))}
+                placeholder="Instructions for the PII detection model..."
+                className="w-full h-32 rounded-md border border-[var(--color-base-200)] dark:border-[var(--color-base-800)] bg-[var(--color-base-50)] dark:bg-[var(--color-base-900)] px-3 py-2 text-xs font-mono resize-y focus:outline-none focus:ring-1 focus:ring-[var(--color-blue-400)]"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">User Corrections / Context</Label>
+              <p className="text-[10px] text-[var(--color-base-400)]">
+                Added to every detection call. Use for correcting misidentified entities (e.g. "Tom Cruise is always an actor name, not a person").
+              </p>
+              <textarea
+                value={localConfig.user_context || ""}
+                onChange={(e) => setLocalConfig(prev => ({ ...prev, user_context: e.target.value }))}
+                placeholder="e.g. Always treat 'Tom Cruise' as ACTOR not PERSON..."
+                className="w-full h-24 rounded-md border border-[var(--color-base-200)] dark:border-[var(--color-base-800)] bg-[var(--color-base-50)] dark:bg-[var(--color-base-900)] px-3 py-2 text-xs font-mono resize-y focus:outline-none focus:ring-1 focus:ring-[var(--color-blue-400)]"
               />
             </div>
           </CollapsibleContent>

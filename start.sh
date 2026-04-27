@@ -6,7 +6,7 @@
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_PORT=8001
+BACKEND_PORT=8012
 FRONTEND_PORT=5173
 
 echo "🚀 Starting CloakChat"

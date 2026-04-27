@@ -5,7 +5,7 @@ echo Starting CloakChat
 echo ========================
 echo.
 
-set BACKEND_PORT=8001
+set BACKEND_PORT=8012
 set FRONTEND_PORT=5173
 set PROJECT_DIR=%~dp0
 
@@ -35,13 +35,29 @@ if errorlevel 1 (
 echo Prerequisites OK
 echo.
 
-REM Kill existing processes on ports
+REM Kill previous CloakChat instances
+echo Stopping previous CloakChat instances...
+
+REM Kill frontend window if still open
+taskkill /FI "WINDOWTITLE eq CloakChat Frontend" /F >nul 2>&1
+
+REM Kill processes on backend port
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%BACKEND_PORT%') do (
     taskkill /F /PID %%a >nul 2>&1
 )
+
+REM Kill processes on frontend port
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%FRONTEND_PORT%') do (
     taskkill /F /PID %%a >nul 2>&1
 )
+
+REM Kill any lingering python/bun processes from CloakChat
+taskkill /FI "IMAGENAME eq python.exe" /FI "WINDOWTITLE eq CloakChat*" /F >nul 2>&1
+taskkill /FI "IMAGENAME eq bun.exe" /FI "WINDOWTITLE eq CloakChat*" /F >nul 2>&1
+
+REM Brief pause to let ports release
+timeout /t 1 /nobreak >nul
+echo Done.
 
 REM Start Frontend in new window (background)
 echo Starting frontend server...

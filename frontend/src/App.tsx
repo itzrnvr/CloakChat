@@ -1,3 +1,4 @@
+import { useEffect, useCallback } from "react"
 import { Sidebar } from "@/components/sidebar/Sidebar"
 import { ChatContainer } from "@/components/chat/ChatContainer"
 import { XRayPanel } from "@/components/xray/XRayPanel"
@@ -7,9 +8,40 @@ import { useConfig } from "@/hooks/useConfig"
 import { Loader2 } from "lucide-react"
 
 function App() {
-  const { messages, traceEvents, status } = useAppStore()
+  const { messages, traceEvents, status, setSessions } = useAppStore()
   const { sendMessage, stopGeneration } = useChat()
   const { config, updateConfig, isLoading, error } = useConfig()
+
+  const loadSessions = useCallback(() => {
+    fetch("/api/sessions")
+      .then(async res => {
+        const data = await res.json()
+        if (!res.ok || !Array.isArray(data)) return []
+        return data
+      })
+      .then(data => {
+        console.log("[sessions] loaded", data.length)
+        setSessions(data)
+      })
+      .catch(err => {
+        console.error("[sessions] load failed", err)
+        setSessions([])
+      })
+  }, [setSessions])
+
+  // Load sessions on mount
+  useEffect(() => {
+    loadSessions()
+  }, [loadSessions])
+
+  // Re-load when page regains focus (e.g. after reload)
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState === "visible") loadSessions()
+    }
+    document.addEventListener("visibilitychange", handler)
+    return () => document.removeEventListener("visibilitychange", handler)
+  }, [loadSessions])
 
   if (isLoading) {
     return (

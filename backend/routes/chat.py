@@ -10,7 +10,6 @@ from core.llm import create_detection_llm, create_cloud_llm
 from core.pipeline import run_streaming
 
 router = APIRouter()
-_config = load_config()
 
 logger = logging.getLogger("cloakchat.chat")
 
@@ -32,6 +31,8 @@ async def chat(request: ChatRequest):
     logger.info(f"[REQUEST] Entity map entries: {len(request.entity_map)}")
 
     try:
+        _config = load_config()
+
         detection_llm = create_detection_llm(_config.detection)
         cloud_llm = (
             create_detection_llm(_config.detection)
@@ -40,6 +41,11 @@ async def chat(request: ChatRequest):
         )
 
         tool_mode = _config.detection.get("tool_mode", "native")
+
+        # Merge user context into system prompt if provided
+        system_prompt = _config.system_prompt
+        if _config.user_context:
+            system_prompt += f"\n\nUser corrections/context:\n{_config.user_context}"
 
         logger.info(f"[CONFIG] Detection model: {_config.detection.get('model')}")
         logger.info(f"[CONFIG] Cloud model: {_config.cloud.get('model')}")
@@ -53,7 +59,7 @@ async def chat(request: ChatRequest):
                     text=request.message,
                     detection_llm=detection_llm,
                     cloud_llm=cloud_llm,
-                    system_prompt=_config.system_prompt,
+                    system_prompt=system_prompt,
                     tool_mode=tool_mode,
                     history=request.history,
                     entity_map=request.entity_map or None,

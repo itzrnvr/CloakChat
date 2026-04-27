@@ -14,8 +14,7 @@ export function useConfig() {
         throw new Error(`HTTP error! status: ${res.status}`)
       }
       const data = await res.json()
-      
-      // The backend now returns the nested structure that matches our AppConfig type
+
       if (data) {
         setConfig(data as AppConfig)
       }
@@ -32,18 +31,20 @@ export function useConfig() {
   }, [fetchConfig])
 
   const updateConfig = async (newConfig: AppConfig) => {
-    // Update local state immediately for snappy UI
-    setConfig(newConfig)
-    
     try {
-      // Sync with backend (mostly mock for now, but good practice)
-      await fetch('/api/config', {
+      const res = await fetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newConfig)
       })
-    } catch (err) {
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`)
+      }
+      const saved = await res.json()
+      setConfig(saved as AppConfig)
+    } catch (err: any) {
       console.error("Failed to sync config with backend", err)
+      setError(err.message)
     }
   }
 

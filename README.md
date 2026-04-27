@@ -65,7 +65,7 @@ pip install -r requirements.txt
 
 # Start the backend
 python backend/main.py
-# API available at http://localhost:8001
+# API available at http://localhost:8012
 ```
 
 ### 2. Frontend
@@ -114,7 +114,7 @@ Edit `config.json` at the project root to set your model endpoints and options.
     "temperature": 0.7,
     "max_tokens": 1024
   },
-  "server": { "host": "0.0.0.0", "port": 8001 },
+  "server": { "host": "0.0.0.0", "port": 8012 },
   "simulate_cloud": false,
   "system_prompt": "..."
 }

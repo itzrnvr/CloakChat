@@ -44,6 +44,25 @@ export interface AppConfig {
     simulate_cloud_with_detection: boolean
   }
   system_prompt?: string
+  user_context?: string
+}
+
+export interface Session {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  messages: Message[]
+  anonymizedHistory: Array<{role: string, content: string}>
+  entityMap: Record<string, string>
+  traceGroups: TraceGroup[]
+}
+
+export interface SessionSummary {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface AppState {
@@ -60,6 +79,10 @@ export interface AppState {
   anonymizedHistory: Array<{role: string, content: string}>
   entityMap: Record<string, string>  // original -> placeholder
 
+  // Session management
+  currentSessionId: string | null
+  sessions: SessionSummary[]
+
   addMessage: (message: Message) => void
   addTraceEvent: (event: TraceEvent) => void
   updateTraceEvent: (id: string, content: unknown) => void
@@ -71,4 +94,8 @@ export interface AppState {
   setStatus: (status: "ready" | "processing" | "error", message?: string) => void
   updateSession: (anonymizedMsg: string, anonymizedResponse: string, newEntries: Record<string, string>) => void
   clearHistory: () => void
+  setSessions: (sessions: SessionSummary[]) => void
+  loadSessionData: (session: Session) => void
+  updateSessionTitle: (title: string) => void
+  setCurrentSessionId: (id: string | null) => void
 }

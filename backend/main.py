@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import load_config
-from backend.routes import chat, config
+from backend.routes import chat, config, sessions
 
 # Configure logging before app starts
 logging.basicConfig(
@@ -28,8 +28,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(chat.router,   prefix="/api", tags=["chat"])
-app.include_router(config.router, prefix="/api", tags=["config"])
+app.include_router(chat.router,     prefix="/api", tags=["chat"])
+app.include_router(config.router,   prefix="/api", tags=["config"])
+app.include_router(sessions.router, prefix="/api", tags=["sessions"])
 
 
 @app.get("/api/health")
@@ -42,7 +43,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "backend.main:app",
         host=cfg.server.get("host", "0.0.0.0"),
-        port=cfg.server.get("port", 8001),
+        port=cfg.server.get("port", 8012),
         reload=True,
         log_level="info",
         access_log=True,

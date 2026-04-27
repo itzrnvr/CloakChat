@@ -124,6 +124,7 @@ export const useAppStore = create<AppState>((set) => ({
     traceEvents: [],
     traceGroups: [],
     currentRequestId: null,
+    currentSessionId: null,
     cloudStreamingContent: "",
     anonymizedHistory: [],
     entityMap: {},

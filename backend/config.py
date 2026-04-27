@@ -14,7 +14,7 @@ class Config:
     user_context: str
 
 
-_USER_SETTINGS_PATH = Path("user_settings.json")
+_USER_SETTINGS_PATH = Path("data") / "user_settings.json"
 
 
 def _deep_merge(base: dict, overrides: dict) -> dict:

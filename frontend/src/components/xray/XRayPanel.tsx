@@ -24,6 +24,7 @@ export function XRayPanel({ events }: XRayPanelProps) {
     if (!res.ok) return
     const session = await res.json()
     if (session) {
+      setCurrentSessionId(id)
       loadSessionData(session)
     }
   }

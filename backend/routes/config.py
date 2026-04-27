@@ -1,20 +1,18 @@
+import json
+from pathlib import Path
 from fastapi import APIRouter
 from pydantic import BaseModel
 from backend.config import load_config, save_user_settings
 
 router = APIRouter()
 
-
-def _mask(key: str) -> str:
-    if not key or len(key) <= 8:
-        return "****"
-    return f"{key[:4]}...{key[-4:]}"
+_USER_SETTINGS_PATH = Path("data") / "user_settings.json"
 
 
 def _to_frontend(cfg):
-    """Return merged config with API keys masked, mapping internal 'model' to frontend 'model_id'."""
-    det = {**cfg.detection, "api_key": _mask(cfg.detection.get("api_key", "")), "model_id": cfg.detection.get("model", "")}
-    cloud = {**cfg.cloud, "api_key": _mask(cfg.cloud.get("api_key", "")), "model_id": cfg.cloud.get("model", "")}
+    """Return merged config mapping internal 'model' to frontend 'model_id'."""
+    det = {**cfg.detection, "model_id": cfg.detection.get("model", "")}
+    cloud = {**cfg.cloud, "model_id": cfg.cloud.get("model", "")}
     return {
         "detection": det,
         "cloud": cloud,
@@ -28,7 +26,7 @@ def _to_frontend(cfg):
 
 @router.get("/config")
 async def get_config():
-    """Return current config (API keys masked)."""
+    """Return current config (API keys unmasked so they round-trip correctly)."""
     cfg = load_config()
     return _to_frontend(cfg)
 
@@ -48,7 +46,6 @@ async def put_config(body: ConfigUpdate):
 
     if body.detection is not None:
         det = dict(body.detection)
-        # Map frontend 'model_id' back to internal 'model'
         if "model_id" in det:
             det["model"] = det.pop("model_id")
         overrides["detection"] = det

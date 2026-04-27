@@ -1,14 +1,16 @@
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Send } from "lucide-react"
+import { Send, Square } from "lucide-react"
 import { useState } from "react"
 
 interface MessageInputProps {
   onSend: (message: string) => void
+  onStop?: () => void
   disabled?: boolean
+  isProcessing?: boolean
 }
 
-export function MessageInput({ onSend, disabled }: MessageInputProps) {
+export function MessageInput({ onSend, onStop, disabled, isProcessing }: MessageInputProps) {
   const [input, setInput] = useState("")
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -28,9 +30,15 @@ export function MessageInput({ onSend, disabled }: MessageInputProps) {
         disabled={disabled}
         className="flex-1"
       />
-      <Button type="submit" size="icon" disabled={disabled || !input.trim()}>
-        <Send className="h-4 w-4" />
-      </Button>
+      {isProcessing ? (
+        <Button type="button" size="icon" variant="destructive" onClick={onStop}>
+          <Square className="h-4 w-4" />
+        </Button>
+      ) : (
+        <Button type="submit" size="icon" disabled={disabled || !input.trim()}>
+          <Send className="h-4 w-4" />
+        </Button>
+      )}
     </form>
   )
 }

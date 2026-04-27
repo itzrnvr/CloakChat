@@ -58,10 +58,10 @@ PII is **never** sent to the cloud at any point. The cloud LLM only ever sees re
 ```bash
 # Create and activate virtual environment
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate     # Windows: .venv\Scripts\activate.bat
 
-# Install dependencies
-pip install fastapi uvicorn litellm python-dotenv
+# Install pinned dependencies
+pip install -r requirements.txt
 
 # Start the backend
 python backend/main.py
@@ -79,11 +79,17 @@ bun dev
 
 ### 3. Start both at once
 
+**Linux / macOS:**
 ```bash
 ./start.sh
 ```
 
-`start.sh` checks prerequisites, kills any existing processes on the required ports, then starts both backend and frontend. Press `Ctrl+C` to stop both.
+**Windows:**
+```batch
+start.bat
+```
+
+`start.sh` / `start.bat` check prerequisites, kill any existing processes on the required ports, then start both backend and frontend. Press any key (`Ctrl+C` on Linux/macOS) to stop both.
 
 ---
 
@@ -116,6 +122,31 @@ Edit `config.json` at the project root to set your model endpoints and options.
 
 Set `simulate_cloud: true` to use the local detection model for both detection and cloud inference — useful for local-only testing with no external API calls.
 
+### Extra provider parameters
+
+Any key in the `detection` or `cloud` objects that is not a known CloakChat option is passed straight through to `litellm.completion()`. This lets you use provider-specific features (e.g. `extra_body`, `reasoning_budget`, `top_p`, `frequency_penalty`, etc.) without waiting for explicit support.
+
+```json
+{
+  "detection": {
+    "base_url": "http://localhost:8000/v1",
+    "model": "Qwen3.5-2B-Q6_K.gguf",
+    "temperature": 0.1,
+    "extra_body": {
+      "chat_template_kwargs": { "enable_thinking": false }
+    }
+  },
+  "cloud": {
+    "base_url": "https://api.openai.com/v1",
+    "model": "o3-mini",
+    "api_key": "sk-...",
+    "reasoning_budget": 16384
+  }
+}
+```
+
+Known keys (absorbed by CloakChat): `model`, `base_url`, `api_key`, `temperature`, `max_tokens`, `tool_mode`. Everything else is forwarded as a LiteLLM kwarg.
+
 ### Env var overrides (sensitive fields)
 
 ```env
@@ -136,6 +167,24 @@ CLOUD_BASE_URL=...
 
 ---
 
+## Backend Logging
+
+The backend logs every request, pipeline step, and error to the terminal in real time. Log format:
+
+```
+14:32:01 | cloakchat.chat       | INFO     | [REQUEST] POST /api/chat
+14:32:01 | cloakchat.chat       | INFO     | [REQUEST] Message: 'john weds mandy'
+14:32:01 | cloakchat.llm        | INFO     | [DETECTION_LLM] model=openai/Qwen3.5-2B-Q6_K.gguf ...
+14:32:02 | cloakchat.llm        | INFO     | [DETECTION_LLM] Tool call result: ...
+14:32:02 | cloakchat.chat       | INFO     | [DETECTION] Found 2 new PII replacements
+14:32:02 | cloakchat.chat       | INFO     | [ANONYMIZED] 'Marcus weds Claire'
+14:32:03 | cloakchat.llm        | INFO     | [CLOUD_LLM] Stream finished. Chunks received: 42
+```
+
+Full tracebacks are printed on any crash. If you run via `start.bat`, the backend terminal shows all of this directly.
+
+---
+
 ## Project Structure
 
 ```
@@ -152,7 +201,7 @@ cloakchat/
 │   ├── reconstruction.py# Restore PII from EntityMap
 │   ├── validate.py      # Check anonymization quality
 │   ├── pipeline.py      # Orchestrates full pipeline (streaming + non-streaming)
-│   ├── llm.py           # LiteLLM factory functions
+│   ├── llm.py           # LiteLLM factory functions (passthrough extra params)
 │   └── types.py         # Shared data classes
 ├── frontend/
 │   └── src/
@@ -165,7 +214,9 @@ cloakchat/
 │           └── sidebar/
 ├── tests/               # Backend + frontend tests
 ├── config.json          # Runtime configuration
-├── start.sh             # One-command start script
+├── requirements.txt     # Pinned Python dependencies (litellm==1.83.14)
+├── start.sh             # One-command start (Linux/macOS)
+├── start.bat            # One-command start (Windows)
 └── docs.md              # Full technical documentation
 ```
 
@@ -188,6 +239,12 @@ Returns an SSE stream of events. See `docs.md` for the full event schema.
 ### `GET /api/config`
 
 Returns the active config with API keys masked.
+
+---
+
+## Security Note — LiteLLM
+
+LiteLLM versions `1.82.7` and `1.82.8` were compromised in a supply-chain attack (CVE-2026-33634). This project pins a safe version (`1.83.14`) in `requirements.txt`. Always install from the lockfile and verify before upgrading.
 
 ---
 

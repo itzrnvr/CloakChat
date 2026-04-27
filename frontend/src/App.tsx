@@ -8,7 +8,7 @@ import { Loader2 } from "lucide-react"
 
 function App() {
   const { messages, traceEvents, status } = useAppStore()
-  const { sendMessage } = useChat()
+  const { sendMessage, stopGeneration } = useChat()
   const { config, updateConfig, isLoading, error } = useConfig()
 
   if (isLoading) {
@@ -57,6 +57,7 @@ function App() {
         <ChatContainer
           messages={messages}
           onSendMessage={sendMessage}
+          onStopGeneration={stopGeneration}
           isProcessing={status === "processing"}
         />
       </main>

@@ -10,8 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -65,6 +65,9 @@ htmlcov/
 *.bak
 *.tmp
 .cache/
+
+# Config with secrets
+config.json
 
 # Archive
 .archive/

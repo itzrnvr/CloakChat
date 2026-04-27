@@ -1,5 +1,6 @@
 import sys
 import os
+import logging
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -9,6 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import load_config
 from backend.routes import chat, config
+
+# Configure logging before app starts
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)-20s | %(levelname)-8s | %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 app = FastAPI(title="CloakChat", description="Privacy-preserving AI chat", version="1.0.0")
 
@@ -36,4 +44,6 @@ if __name__ == "__main__":
         host=cfg.server.get("host", "0.0.0.0"),
         port=cfg.server.get("port", 8001),
         reload=True,
+        log_level="info",
+        access_log=True,
     )

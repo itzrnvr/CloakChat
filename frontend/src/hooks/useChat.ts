@@ -21,7 +21,7 @@ export function useChat() {
   const newEntriesRef = useRef<Record<string, string>>({})
   const anonymizedResponseRef = useRef<string>("")
 
-  const { connect } = useSSE('/api/chat', (data: unknown) => {
+  const { connect, disconnect } = useSSE('/api/chat', (data: unknown) => {
     const event = data as Record<string, unknown>
 
     switch (event.type) {
@@ -136,5 +136,16 @@ export function useChat() {
     })
   }
 
-  return { sendMessage }
+  const stopGeneration = () => {
+    disconnect()
+    setStatus('ready')
+
+    // Reset turn-local refs since this turn is abandoned
+    anonymizedMsgRef.current = ""
+    anonymizedResponseRef.current = ""
+    newEntriesRef.current = {}
+    setCloudStreamingContent("")
+  }
+
+  return { sendMessage, stopGeneration }
 }

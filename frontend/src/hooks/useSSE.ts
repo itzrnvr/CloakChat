@@ -1,12 +1,13 @@
+import { useRef } from "react"
+
 export function useSSE(url: string, onMessage: (data: unknown) => void) {
+  const abortControllerRef = useRef<AbortController | null>(null)
+
   const connect = (body: unknown) => {
-    // SSE usually uses GET, but for chat we often need POST
-    // Standard EventSource only supports GET.
-    // For this implementation, we'll use fetch with ReadableStream to simulate SSE
-    // or use a library like @microsoft/fetch-event-source
-    
-    // Let's implement a simple fetch-based reader for SSE
-    
+    abortControllerRef.current?.abort()
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     const fetchData = async () => {
       try {
         const response = await fetch(url, {
@@ -15,6 +16,7 @@ export function useSSE(url: string, onMessage: (data: unknown) => void) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(body),
+          signal: controller.signal,
         })
 
         if (!response.ok) {
@@ -29,10 +31,10 @@ export function useSSE(url: string, onMessage: (data: unknown) => void) {
         while (true) {
           const { value, done } = await reader.read()
           if (done) break
-          
+
           const chunk = decoder.decode(value)
           const lines = chunk.split('\n\n')
-          
+
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               const data = line.slice(6)
@@ -46,6 +48,9 @@ export function useSSE(url: string, onMessage: (data: unknown) => void) {
           }
         }
       } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          return
+        }
         console.error('SSE Error:', error)
         onMessage({ type: 'error', content: String(error) })
       }
@@ -54,5 +59,10 @@ export function useSSE(url: string, onMessage: (data: unknown) => void) {
     fetchData()
   }
 
-  return { connect }
+  const disconnect = () => {
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
+  }
+
+  return { connect, disconnect }
 }

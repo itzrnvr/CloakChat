@@ -37,6 +37,21 @@ Single source of truth for all runtime settings.
 | `simulate_cloud` | bool | Use detection model as cloud model (for local-only testing) |
 | `system_prompt` | string | System prompt sent to the detection LLM |
 
+**Extra provider parameters** — any key in `detection` or `cloud` that is not listed above is forwarded straight to `litellm.completion()`. This allows using provider-specific options (e.g. `extra_body`, `reasoning_budget`, `top_p`, `frequency_penalty`) without waiting for explicit support.
+
+```json
+{
+  "detection": {
+    "extra_body": { "chat_template_kwargs": { "enable_thinking": false } }
+  },
+  "cloud": {
+    "reasoning_budget": 16384
+  }
+}
+```
+
+Known keys (absorbed by CloakChat, not forwarded): `model`, `base_url`, `api_key`, `temperature`, `max_tokens`, `tool_mode`. Everything else is forwarded as a LiteLLM kwarg.
+
 **Env var overrides:** `DETECTION_API_KEY`, `CLOUD_API_KEY`, `DETECTION_BASE_URL`, `CLOUD_BASE_URL`
 
 ### `tool_mode` options
@@ -133,6 +148,7 @@ create_cloud_llm(cfg: dict) -> Callable       # streaming, yields chunks
 
 - Local llama.cpp servers: `model` prefixed with `openai/` automatically if `base_url` is set and model has no `/`
 - Env var fallback for API keys
+- **Passthrough extra params** — unknown keys in `cfg` (e.g. `extra_body`, `reasoning_budget`) are unpacked into `litellm.completion(...)` as kwargs. Logged under `[DETECTION_LLM] extra_params={...}` / `[CLOUD_LLM] extra_params={...}`.
 
 ### `core/pipeline.py`
 
@@ -237,15 +253,43 @@ On each `sendMessage`:
 ## Running
 
 ```bash
-# Install Python dependencies
-pip install fastapi uvicorn litellm python-dotenv
+# Install pinned Python dependencies
+pip install -r requirements.txt
 
 # Start backend (from project root)
 python backend/main.py
 
 # Frontend
-cd frontend && bun dev
+cd frontend && bun install && bun dev
 ```
+
+Or use the one-command scripts:
+
+- Linux / macOS: `./start.sh`
+- Windows: `start.bat`
+
+Both check prerequisites, kill stale processes, launch backend + frontend, and shut down together on exit.
+
+### Backend logging
+
+The backend logs every request, every pipeline step, and full tracebacks on crash. Format:
+
+```
+14:32:01 | cloakchat.chat       | INFO     | [REQUEST] POST /api/chat
+14:32:01 | cloakchat.chat       | INFO     | [REQUEST] Message: 'john weds mandy'
+14:32:01 | cloakchat.llm        | INFO     | [DETECTION_LLM] model=openai/Qwen3.5-2B-Q6_K.gguf ...
+14:32:02 | cloakchat.chat       | INFO     | [DETECTION] Found 2 new PII replacements
+14:32:02 | cloakchat.chat       | INFO     | [ANONYMIZED] 'Marcus weds Claire'
+14:32:03 | cloakchat.llm        | INFO     | [CLOUD_LLM] Stream finished. Chunks received: 42
+```
+
+If you run via `start.bat`, the backend stays in the foreground terminal so all logs print directly. If you run manually, pass `--log-level info` or set the `LOG_LEVEL` env var.
+
+---
+
+## Security Note — LiteLLM
+
+LiteLLM versions `1.82.7` and `1.82.8` were compromised in a supply-chain attack (CVE-2026-33634). This project pins a safe version (`1.83.14`) in `requirements.txt`. Always install from the lockfile and verify before upgrading.
 
 ---
 

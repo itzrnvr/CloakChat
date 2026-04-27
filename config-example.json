@@ -4,15 +4,18 @@
     "model": "Qwen3.5-2B-Q6_K.gguf",
     "api_key": "local",
     "temperature": 0.1,
-    "max_tokens": 1024,
-    "tool_mode": "native"
+    "extra_body": {
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      }
+    }
   },
   "cloud": {
     "base_url": "http://moonhowler.local:8000/v1",
     "model": "Qwen3.5-2B-Q6_K.gguf",
     "api_key": "local",
     "temperature": 0.7,
-    "max_tokens": 1024
+    "reasoning_budget": 16384
   },
   "server": {
     "host": "0.0.0.0",

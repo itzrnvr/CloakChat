@@ -1,7 +1,9 @@
 import { MessageList } from "./MessageList"
 import { MessageInput } from "./MessageInput"
+import { ClarificationPrompt } from "./ClarificationPrompt"
 import { useAppStore } from "@/stores/appStore"
 import { Loader2 } from "lucide-react"
+import type { ClarificationOption } from "@/types"
 
 interface ChatContainerProps {
   messages: Array<{
@@ -10,12 +12,15 @@ interface ChatContainerProps {
     timestamp?: string
   }>
   onSendMessage: (message: string) => void
+  onSubmitClarification: (option: ClarificationOption, remember: boolean) => void
   onStopGeneration?: () => void
-  isProcessing: boolean
+  status: "ready" | "processing" | "awaiting_clarification" | "error"
 }
 
-export function ChatContainer({ messages, onSendMessage, onStopGeneration, isProcessing }: ChatContainerProps) {
-  const { traceGroups, currentRequestId } = useAppStore()
+export function ChatContainer({ messages, onSendMessage, onSubmitClarification, onStopGeneration, status }: ChatContainerProps) {
+  const { traceGroups, currentRequestId, pendingClarification } = useAppStore()
+  const isProcessing = status === "processing"
+  const isBlocked = status === "processing" || status === "awaiting_clarification"
 
   // Get the current step message from the active trace group
   const currentGroup = traceGroups.find(g => g.id === currentRequestId)
@@ -40,10 +45,17 @@ export function ChatContainer({ messages, onSendMessage, onStopGeneration, isPro
         </div>
       )}
 
+      {pendingClarification && (
+        <ClarificationPrompt
+          clarification={pendingClarification}
+          onSubmit={onSubmitClarification}
+        />
+      )}
+
       <MessageInput
         onSend={onSendMessage}
         onStop={onStopGeneration}
-        disabled={isProcessing}
+        disabled={isBlocked}
         isProcessing={isProcessing}
       />
     </div>

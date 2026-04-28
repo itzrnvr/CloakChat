@@ -7,19 +7,20 @@ import { useState } from "react"
 import type { AppConfig } from "@/types"
 
 interface SidebarProps {
-  status: "ready" | "processing" | "error"
+  status: "ready" | "processing" | "awaiting_clarification" | "error"
+  statusMessage?: string
   config: AppConfig
   onConfigChange: (config: AppConfig) => void
 }
 
-export function Sidebar({ status, config, onConfigChange }: SidebarProps) {
+export function Sidebar({ status, statusMessage, config, onConfigChange }: SidebarProps) {
   const [isOpen, setIsOpen] = useState(true)
 
   return (
     <div className="w-80 border-r border-[var(--color-base-200)] dark:border-[var(--color-base-800)] bg-[var(--color-base-50)] dark:bg-[var(--color-base-900)] flex flex-col h-full">
       <div className="p-4 border-b border-[var(--color-base-200)] dark:border-[var(--color-base-800)]">
         <h1 className="text-xl font-bold mb-2">CloakChat</h1>
-        <StatusIndicator status={status} />
+        <StatusIndicator status={status} message={statusMessage} />
       </div>
       
       <div className="flex-1 overflow-hidden">

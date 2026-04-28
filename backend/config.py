@@ -67,6 +67,7 @@ def load_config(path: str = "config.json") -> Config:
 
 def save_user_settings(overrides: dict) -> None:
     """Write sparse overrides to user_settings.json."""
+    _USER_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = _USER_SETTINGS_PATH.with_suffix(".tmp")
     with open(tmp, "w") as f:
         json.dump(overrides, f, indent=2)

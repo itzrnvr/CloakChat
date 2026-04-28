@@ -8,8 +8,8 @@ import { useConfig } from "@/hooks/useConfig"
 import { Loader2 } from "lucide-react"
 
 function App() {
-  const { messages, traceEvents, status, setSessions } = useAppStore()
-  const { sendMessage, stopGeneration } = useChat()
+  const { messages, traceEvents, status, statusMessage, setSessions } = useAppStore()
+  const { sendMessage, stopGeneration, submitClarification } = useChat()
   const { config, updateConfig, isLoading, error } = useConfig()
 
   const loadSessions = useCallback(() => {
@@ -81,6 +81,7 @@ function App() {
     <div className="flex h-screen w-full overflow-hidden bg-[var(--color-paper)] dark:bg-[var(--color-base-950)] text-[var(--color-black)] dark:text-[var(--color-base-50)]">
       <Sidebar
         status={status}
+        statusMessage={statusMessage}
         config={config}
         onConfigChange={updateConfig}
       />
@@ -89,8 +90,9 @@ function App() {
         <ChatContainer
           messages={messages}
           onSendMessage={sendMessage}
+          onSubmitClarification={submitClarification}
           onStopGeneration={stopGeneration}
-          isProcessing={status === "processing"}
+          status={status}
         />
       </main>
 

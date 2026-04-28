@@ -8,15 +8,14 @@ const DEFAULT_CONFIG: AppConfig = {
     api_key: "",
     temperature: 0.1,
     max_tokens: 1024,
-    tool_mode: "native"
+    output_mode: "tool"
   },
   cloud: {
     base_url: "http://moonhowler.local:8000/v1",
     model_id: "Qwen3.5-2B-Q6_K.gguf",
     api_key: "",
     temperature: 0.7,
-    max_tokens: 1024,
-    tool_mode: "none"
+    max_tokens: 1024
   },
   testing: {
     simulate_cloud_with_detection: false
@@ -36,6 +35,7 @@ export const useAppStore = create<AppState>((set) => ({
   anonymizedHistory: [],
   entityMap: {},
   sessions: [],
+  pendingClarification: null,
 
   addMessage: (message) => set((state) => ({
     messages: [...state.messages, message]
@@ -59,6 +59,7 @@ export const useAppStore = create<AppState>((set) => ({
         group.summary.piiCount = ev?.replacements?.length ?? 0
       }
 
+      if (event.type === 'clarification_required') group.summary.status = 'awaiting_clarification'
       if (event.type === 'error') group.summary.status = 'error'
       if (event.type === 'done') group.summary.status = 'completed'
     }
@@ -110,6 +111,10 @@ export const useAppStore = create<AppState>((set) => ({
 
   setStatus: (status, message) => set({ status, statusMessage: message }),
 
+  setPendingClarification: (pendingClarification) => set({ pendingClarification }),
+
+  clearPendingClarification: () => set({ pendingClarification: null }),
+
   updateSession: (anonymizedMsg, anonymizedResponse, newEntries) => set((state) => ({
     anonymizedHistory: [
       ...state.anonymizedHistory,
@@ -125,9 +130,12 @@ export const useAppStore = create<AppState>((set) => ({
     traceGroups: [],
     currentRequestId: null,
     currentSessionId: null,
+    status: "ready",
+    statusMessage: undefined,
     cloudStreamingContent: "",
     anonymizedHistory: [],
     entityMap: {},
+    pendingClarification: null,
   }),
 
   setSessions: (sessions: SessionSummary[]) => set({ sessions }),
@@ -137,9 +145,12 @@ export const useAppStore = create<AppState>((set) => ({
     traceEvents: [],
     traceGroups: session.traceGroups,
     currentRequestId: null,
+    status: "ready",
+    statusMessage: undefined,
     cloudStreamingContent: "",
     anonymizedHistory: session.anonymizedHistory,
     entityMap: session.entityMap,
+    pendingClarification: null,
   }),
 
   updateSessionTitle: (title: string) => set((state) => {

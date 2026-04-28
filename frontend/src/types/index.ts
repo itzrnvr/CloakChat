@@ -21,8 +21,26 @@ export interface TraceGroup {
   summary: {
     piiCount: number
     duration?: number
-    status: "processing" | "completed" | "error"
+    status: "processing" | "awaiting_clarification" | "completed" | "error"
   }
+}
+
+export interface ClarificationOption {
+  id: string
+  label: string
+  action: "keep" | "anonymize"
+  resolution: string
+}
+
+export interface ClarificationRequest {
+  requestId: string
+  message: string
+  entity: string
+  entityType: string
+  reason?: string
+  question: string
+  suggestedReplacement?: string
+  options: ClarificationOption[]
 }
 
 export interface ModelConfig {
@@ -31,7 +49,10 @@ export interface ModelConfig {
   api_key: string
   temperature: number
   max_tokens: number
-  tool_mode: "native" | "text_json" | "mistral_tags" | "none"
+  output_mode?: "tool" | "prompted" | "native"
+  tool_mode?: "native" | "text_json" | "mistral_tags" | "none"
+  strict?: boolean
+  extra_body?: Record<string, unknown>
 }
 
 export interface DetectionConfig extends ModelConfig {}
@@ -71,9 +92,10 @@ export interface AppState {
   traceGroups: TraceGroup[]
   currentRequestId: string | null
   config: AppConfig
-  status: "ready" | "processing" | "error"
+  status: "ready" | "processing" | "awaiting_clarification" | "error"
   statusMessage?: string
   cloudStreamingContent: string
+  pendingClarification: ClarificationRequest | null
 
   // Conversation session state (sent to backend each turn)
   anonymizedHistory: Array<{role: string, content: string}>
@@ -91,7 +113,9 @@ export interface AppState {
   setCloudStreamingContent: (content: string) => void
   appendCloudStreamingContent: (chunk: string) => void
   setConfig: (config: AppConfig) => void
-  setStatus: (status: "ready" | "processing" | "error", message?: string) => void
+  setStatus: (status: "ready" | "processing" | "awaiting_clarification" | "error", message?: string) => void
+  setPendingClarification: (clarification: ClarificationRequest) => void
+  clearPendingClarification: () => void
   updateSession: (anonymizedMsg: string, anonymizedResponse: string, newEntries: Record<string, string>) => void
   clearHistory: () => void
   setSessions: (sessions: SessionSummary[]) => void

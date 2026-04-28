@@ -14,6 +14,31 @@ class EntityMap:
     reverse: dict[str, str]  # placeholder -> original
 
 
+@dataclass(frozen=True)
+class Ambiguity:
+    original: str
+    entity_type: str
+    suggested_replacement: str
+    reason: str
+
+
+@dataclass
+class DetectionResult:
+    replacements: list[Replacement]
+    ambiguities: list[Ambiguity]
+    reasoning: str = ""
+
+
+@dataclass(frozen=True)
+class PlaybookEntry:
+    original: str
+    entity_type: str
+    action: str  # "keep" | "anonymize"
+    resolution: str
+    replacement: str = ""
+    note: str = ""
+
+
 @dataclass
 class PipelineResult:
     original_text: str

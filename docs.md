@@ -1,20 +1,24 @@
 # CloakChat — Documentation
 
 Privacy-preserving AI chat: anonymize PII before sending to a cloud LLM, then reconstruct the response. Supports multi-turn conversations while keeping all PII local.
+# CloakChat — Documentation
+
+Privacy-preserving AI chat: anonymize PII before sending to a cloud LLM, then reconstruct the response. Supports multi-turn conversations while keeping all PII local.
 
 ---
 
 ## Architecture
 
 ```
-User message
-  → detect NEW PII (local LLM, skips already-known entities)
-  → replace PII with realistic fake substitutes
-  → validate anonymization
-  → send [anonymized history + current message] to cloud LLM (streaming)
-  → reconstruct response (swap placeholders back to originals)
-  → stream back to frontend
-  → frontend accumulates entity map across turns
+1.  **Reasoning**: Local model thinks about privacy implications (shown in X-Ray)
+2.  **Detect NEW PII**: Local LLM finds sensitive data, skipping already-known entities
+3.  **Ambiguity Check**: If unclear (e.g., public figure vs. private person), asks user for clarification
+4.  **Replace PII**: Substitutes real data with realistic fake names/info
+5.  **Validate**: Ensures no original PII remains in the anonymized text
+6.  **Cloud Inference**: Sends sanitized message + history to cloud provider
+7.  **Reconstruct**: Swaps fake names back for originals locally
+8.  **Verify**: Local model checks reconstruction quality and fixes any leaks
+9.  **Store**: Frontend accumulates entity map and playbook decisions
 ```
 
 ---
@@ -26,18 +30,18 @@ Single source of truth for all runtime settings.
 | Field | Type | Description |
 |---|---|---|
 | `detection.base_url` | string | OpenAI-compatible endpoint for the detection model |
-| `detection.model` | string | Model name (prefixed `openai/` automatically for local endpoints) |
+| `detection.model` | string | Model name for the OpenAI-compatible endpoint |
 | `detection.api_key` | string | API key (`"local"` for llama.cpp servers) |
 | `detection.temperature` | float | Sampling temperature (low = more deterministic) |
 | `detection.max_tokens` | int | Max tokens for detection response |
-| `detection.tool_mode` | string | `"native"` / `"mistral_tags"` / `"text_json"` / `"none"` |
+| `detection.output_mode` | string | `"tool"` / `"prompted"` / `"native"` |
 | `cloud.*` | — | Same fields as detection, for the cloud inference model |
 | `server.host` | string | Host to bind the backend server |
 | `server.port` | int | Port for the backend server |
 | `simulate_cloud` | bool | Use detection model as cloud model (for local-only testing) |
 | `system_prompt` | string | System prompt sent to the detection LLM |
 
-**Extra provider parameters** — any key in `detection` or `cloud` that is not listed above is forwarded straight to `litellm.completion()`. This allows using provider-specific options (e.g. `extra_body`, `reasoning_budget`, `top_p`, `frequency_penalty`) without waiting for explicit support.
+**Extra provider parameters** — any key in `detection` or `cloud` that is not listed above is forwarded to the OpenAI-compatible request. This allows using provider-specific options (e.g. `extra_body`, `reasoning_effort`, `top_p`, `frequency_penalty`) without waiting for explicit support.
 
 ```json
 {
@@ -50,18 +54,17 @@ Single source of truth for all runtime settings.
 }
 ```
 
-Known keys (absorbed by CloakChat, not forwarded): `model`, `base_url`, `api_key`, `temperature`, `max_tokens`, `tool_mode`. Everything else is forwarded as a LiteLLM kwarg.
+Known keys (absorbed by CloakChat, not forwarded): `model`, `base_url`, `api_key`, `temperature`, `max_tokens`, `output_mode`, `tool_mode`, `strict`. Everything else is forwarded as model settings.
 
 **Env var overrides:** `DETECTION_API_KEY`, `CLOUD_API_KEY`, `DETECTION_BASE_URL`, `CLOUD_BASE_URL`
 
-### `tool_mode` options
+### `output_mode` options
 
 | Value | Description |
 |---|---|
-| `native` | OpenAI native function/tool calling. Requires model support (`--jinja` in llama.cpp). |
-| `mistral_tags` | Mistral `<\|tool_call\|>` tag format. |
-| `text_json` | Model returns plain JSON in response body. Schema injected into system prompt. |
-| `none` | No structured output. Falls back to JSON parsing. |
+| `tool` | PydanticAI tool-output mode. Best default for OpenAI-compatible tool calling. |
+| `prompted` | Schema-in-prompt JSON mode for endpoints without tool support. |
+| `native` | Provider-native JSON schema output when supported. |
 
 ### Placeholder style
 
@@ -87,22 +90,21 @@ Data classes shared across all modules.
 - **`EntityMap`** — bidirectional mapping: `forward` (original→placeholder), `reverse` (placeholder→original)
 - **`PipelineResult`** — full result of a pipeline run
 
-### `core/detection.py`
+### `core/privacy_agent.py`
 
-Detects PII in text using an LLM.
+Detects PII with PydanticAI structured output.
 
 ```python
-detect_pii(text, llm, system_prompt, tool_mode, existing_map=None) -> list[Replacement]
+detect_pii_with_agent(text, cfg, system_prompt, existing_map=None) -> DetectionResult
 ```
 
-- Builds a `[system, user]` message pair
+- Builds a typed PydanticAI agent over an OpenAI-compatible endpoint
 - `existing_map`: if provided (multi-turn), appends two hints to the system prompt:
   1. Already-anonymized entity mappings (`"john" → "Marcus"`) — LLM is told to skip these
   2. Already-used placeholder names — LLM is told **not to reuse** these for new entities (prevents collisions)
-- Passes tools definition for `native` / `mistral_tags` modes
-- Parses LLM response based on `tool_mode`
+- Uses typed `replacements` and `ambiguities`
 - Post-filters: strips any returned entities already present in `existing_map`
-- Returns list of `Replacement` objects for **new entities only**
+- Returns `DetectionResult` for **new entities only**
 
 ### `core/replacement.py`
 
@@ -139,16 +141,14 @@ validate(anonymized_text, entity_map) -> {"valid": bool, "errors": list[str]}
 
 ### `core/llm.py`
 
-Factory functions for LLM callables. Uses **LiteLLM** for all providers.
+Factory function for the cloud streaming callable. Uses the OpenAI-compatible Python client.
 
 ```python
-create_detection_llm(cfg: dict) -> Callable   # non-streaming, supports tools
 create_cloud_llm(cfg: dict) -> Callable       # streaming, yields chunks
 ```
 
-- Local llama.cpp servers: `model` prefixed with `openai/` automatically if `base_url` is set and model has no `/`
 - Env var fallback for API keys
-- **Passthrough extra params** — unknown keys in `cfg` (e.g. `extra_body`, `reasoning_budget`) are unpacked into `litellm.completion(...)` as kwargs. Logged under `[DETECTION_LLM] extra_params={...}` / `[CLOUD_LLM] extra_params={...}`.
+- **Passthrough extra params** — unknown keys in `cfg` (e.g. `extra_body`, `reasoning_effort`) are sent with the request.
 
 ### `core/pipeline.py`
 
@@ -156,10 +156,10 @@ Orchestrates the full anonymization pipeline.
 
 ```python
 # Single-turn, non-streaming (no history support)
-run(text, detection_llm, cloud_llm, system_prompt, tool_mode) -> PipelineResult
+run(text, detection_cfg, cloud_llm, system_prompt) -> PipelineResult
 
 # Multi-turn, streaming
-run_streaming(text, detection_llm, cloud_llm, system_prompt, tool_mode,
+run_streaming(text, detection_cfg, cloud_llm, system_prompt,
               history=None, entity_map=None) -> Generator[dict]
 ```
 
@@ -167,65 +167,20 @@ run_streaming(text, detection_llm, cloud_llm, system_prompt, tool_mode,
 
 | Event type | Fields | Description |
 |---|---|---|
+| `detection_reasoning` | `content: str` | Local model's thinking process during detection |
+| `clarification_required` | `entity, entity_type, question, options` | User clarification needed before continuing |
 | `detection` | `replacements: [{original, placeholder, entity_type}]` | New PII found this turn |
 | `anonymized` | `text: str` | Current message after replacement |
 | `validation` | `valid: bool, errors: list[str]` | Anonymization quality check |
 | `cloud_chunk` | `content: str` | Streaming response chunk from cloud LLM |
 | `reconstruction` | `text: str` | Final response with PII restored |
+| `reconstruction_verification` | `valid, leaks, notes, reasoning` | Quality check and fixes by local model |
 | `entity_map_update` | `new_entries: dict, anonymized_message: str` | New original→placeholder entries from this turn |
+| `playbook_updated` | `entry: dict, remembered: bool` | User decision saved to playbook |
 | `done` | — | Stream complete |
 
 **Multi-turn behaviour in `run_streaming`:**
-- Detection only finds NEW entities (passes `existing_map` to `detect_pii`)
-- Cloud receives full anonymized conversation: `list(history) + [current anonymized message]`
-- Reconstruction uses merged map: `entity_map` (prior turns) + `full_entity_map` (current turn)
-
----
-
-## Backend — `backend/`
-
-Thin FastAPI layer. Reads config, creates LLMs, calls core pipeline.
-
-### `backend/config.py`
-
-```python
-load_config(path="config.json") -> Config
-```
-
-Reads `config.json`, applies env var overrides, returns `Config` dataclass.
-
-### `backend/main.py`
-
-- Creates FastAPI app with CORS middleware
-- Registers `/api/chat` and `/api/config` routes
-- Starts uvicorn server using `server.host` / `server.port` from `config.json`
-
-### `backend/routes/chat.py`
-
-`POST /api/chat`
-
-Request body:
-```json
-{
-  "message": "string",
-  "history": [{"role": "user"|"assistant", "content": "string"}],
-  "entity_map": {"original": "placeholder"}
-}
-```
-
-- `history`: prior **anonymized** conversation turns (sent by frontend, accumulated across turns)
-- `entity_map`: accumulated `{original → placeholder}` map from all prior turns
-- Creates detection + cloud LLMs from config
-- Calls `core.pipeline.run_streaming()` with history and entity map
-- Returns `text/event-stream` (SSE)
-
-### `backend/routes/config.py`
-
-`GET /api/config`
-
-- Returns current config with API keys masked (`abcd...wxyz`)
-
----
+- Detection only finds NEW entities (passes `existing_map` to `detect_pii_with_agent`)
 
 ## Frontend — `frontend/`
 
@@ -284,12 +239,6 @@ The backend logs every request, every pipeline step, and full tracebacks on cras
 ```
 
 If you run via `start.bat`, the backend stays in the foreground terminal so all logs print directly. If you run manually, pass `--log-level info` or set the `LOG_LEVEL` env var.
-
----
-
-## Security Note — LiteLLM
-
-LiteLLM versions `1.82.7` and `1.82.8` were compromised in a supply-chain attack (CVE-2026-33634). This project pins a safe version (`1.83.14`) in `requirements.txt`. Always install from the lockfile and verify before upgrading.
 
 ---
 

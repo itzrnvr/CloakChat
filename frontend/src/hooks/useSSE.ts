@@ -1,9 +1,9 @@
 import { useRef } from "react"
 
-export function useSSE(url: string, onMessage: (data: unknown) => void) {
+export function useSSE(onMessage: (data: unknown) => void) {
   const abortControllerRef = useRef<AbortController | null>(null)
 
-  const connect = (body: unknown) => {
+  const connect = (url: string, body: unknown) => {
     abortControllerRef.current?.abort()
     const controller = new AbortController()
     abortControllerRef.current = controller

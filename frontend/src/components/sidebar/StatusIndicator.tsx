@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils"
 
 interface StatusIndicatorProps {
-  status: "ready" | "processing" | "error"
+  status: "ready" | "processing" | "awaiting_clarification" | "error"
   message?: string
 }
 
@@ -13,11 +13,20 @@ export function StatusIndicator({ status, message }: StatusIndicatorProps) {
           "h-2.5 w-2.5 rounded-full",
           status === "ready" && "bg-[var(--color-green-400)]",
           status === "processing" && "bg-[var(--color-yellow-400)] animate-pulse",
+          status === "awaiting_clarification" && "bg-[var(--color-orange-400)] animate-pulse",
           status === "error" && "bg-[var(--color-red-400)]"
         )}
       />
       <span className="text-[var(--color-base-600)] dark:text-[var(--color-base-400)]">
-        {message || (status === "ready" ? "System Ready" : status === "processing" ? "Processing..." : "Error")}
+        {message || (
+          status === "ready"
+            ? "System Ready"
+            : status === "processing"
+              ? "Processing..."
+              : status === "awaiting_clarification"
+                ? "Waiting for clarification..."
+                : "Error"
+        )}
       </span>
     </div>
   )

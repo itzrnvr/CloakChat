@@ -29,7 +29,9 @@ PII is **never** sent to the cloud at any point. The cloud LLM only ever sees re
 - **Multi-turn Context** — cumulative entity map ensures `"John"` is always `"Marcus"` across the whole session; new fake names are never reused for different people
 - **Cloud Inference** — sends sanitized conversation to any OpenAI-compatible cloud endpoint
 - **Reconstruction** — restores original PII in the response before showing it to the user
-- **X-Ray View** — real-time visualization of every pipeline step (detection, anonymization, validation, cloud response, reconstruction)
+- **X-Ray View** — real-time visualization of every pipeline step (reasoning, detection, anonymization, validation, cloud response, reconstruction, verification)
+- **User Clarification** — asks for user input when entities are ambiguous (e.g., "Is 'Taylor' a public figure or a private person?")
+- **Playbook** — remembers user decisions about entities to maintain consistency across turns
 - **Streaming** — fully streamed end-to-end via SSE
 
 ---
@@ -38,7 +40,7 @@ PII is **never** sent to the cloud at any point. The cloud LLM only ever sees re
 
 | Layer | Technology |
 |---|---|
-| Backend | Python 3.12, FastAPI, LiteLLM, uvicorn |
+| Backend | Python 3.12+, FastAPI, PydanticAI, OpenAI-compatible client, uvicorn |
 | Frontend | React, TypeScript, Vite, Bun, Zustand |
 | Communication | SSE (Server-Sent Events) |
 | LLM providers | Any OpenAI-compatible endpoint (local llama.cpp, Ollama, cloud APIs) |
@@ -105,7 +107,10 @@ Edit `config.json` at the project root to set your model endpoints and options.
     "api_key": "local",
     "temperature": 0.1,
     "max_tokens": 1024,
-    "tool_mode": "native"
+    "output_mode": "tool",
+    "extra_body": {
+      "chat_template_kwargs": { "enable_thinking": true }
+    }
   },
   "cloud": {
     "base_url": "https://api.openai.com/v1",
@@ -124,7 +129,7 @@ Set `simulate_cloud: true` to use the local detection model for both detection a
 
 ### Extra provider parameters
 
-Any key in the `detection` or `cloud` objects that is not a known CloakChat option is passed straight through to `litellm.completion()`. This lets you use provider-specific features (e.g. `extra_body`, `reasoning_budget`, `top_p`, `frequency_penalty`, etc.) without waiting for explicit support.
+Any key in the `detection` or `cloud` objects that is not a known CloakChat option is passed through to the OpenAI-compatible request. This lets you use provider-specific features such as `extra_body`, `reasoning_effort`, `top_p`, `frequency_penalty`, and thinking flags.
 
 ```json
 {
@@ -145,7 +150,7 @@ Any key in the `detection` or `cloud` objects that is not a known CloakChat opti
 }
 ```
 
-Known keys (absorbed by CloakChat): `model`, `base_url`, `api_key`, `temperature`, `max_tokens`, `tool_mode`. Everything else is forwarded as a LiteLLM kwarg.
+Known detection keys absorbed by CloakChat: `model`, `base_url`, `api_key`, `temperature`, `max_tokens`, `output_mode`, `tool_mode`, and `strict`. Everything else is forwarded as model settings.
 
 ### Env var overrides (sensitive fields)
 
@@ -156,14 +161,13 @@ DETECTION_BASE_URL=...
 CLOUD_BASE_URL=...
 ```
 
-### `tool_mode`
+### Detection `output_mode`
 
 | Value | When to use |
 |---|---|
-| `native` | OpenAI-compatible tool calling (requires `--jinja` in llama.cpp) |
-| `mistral_tags` | Mistral `<\|tool_call\|>` format |
-| `text_json` | Model returns JSON in the response body (schema injected into prompt) |
-| `none` | Fallback plain-text JSON parsing |
+| `tool` | PydanticAI tool-output mode. Best default for Nemotron, Qwen, DeepSeek, and OpenAI-compatible tool calling. |
+| `prompted` | Schema-in-prompt JSON mode for endpoints that cannot use tool calls. |
+| `native` | Provider-native JSON schema output when the endpoint supports it. |
 
 ---
 
@@ -174,8 +178,7 @@ The backend logs every request, pipeline step, and error to the terminal in real
 ```
 14:32:01 | cloakchat.chat       | INFO     | [REQUEST] POST /api/chat
 14:32:01 | cloakchat.chat       | INFO     | [REQUEST] Message: 'john weds mandy'
-14:32:01 | cloakchat.llm        | INFO     | [DETECTION_LLM] model=openai/Qwen3.5-2B-Q6_K.gguf ...
-14:32:02 | cloakchat.llm        | INFO     | [DETECTION_LLM] Tool call result: ...
+14:32:01 | cloakchat.privacy_agent | INFO   | PydanticAI privacy detector request
 14:32:02 | cloakchat.chat       | INFO     | [DETECTION] Found 2 new PII replacements
 14:32:02 | cloakchat.chat       | INFO     | [ANONYMIZED] 'Marcus weds Claire'
 14:32:03 | cloakchat.llm        | INFO     | [CLOUD_LLM] Stream finished. Chunks received: 42
@@ -196,12 +199,12 @@ cloakchat/
 │       ├── chat.py      # POST /api/chat  (SSE streaming)
 │       └── config.py    # GET  /api/config (masked keys)
 ├── core/
-│   ├── detection.py     # PII detection via LLM
+│   ├── privacy_agent.py # Typed PydanticAI PII detection
 │   ├── replacement.py   # Apply replacements → EntityMap
 │   ├── reconstruction.py# Restore PII from EntityMap
 │   ├── validate.py      # Check anonymization quality
 │   ├── pipeline.py      # Orchestrates full pipeline (streaming + non-streaming)
-│   ├── llm.py           # LiteLLM factory functions (passthrough extra params)
+│   ├── llm.py           # OpenAI-compatible cloud streaming
 │   └── types.py         # Shared data classes
 ├── frontend/
 │   └── src/
@@ -214,7 +217,7 @@ cloakchat/
 │           └── sidebar/
 ├── tests/               # Backend + frontend tests
 ├── config.json          # Runtime configuration
-├── requirements.txt     # Pinned Python dependencies (litellm==1.83.14)
+├── requirements.txt     # Pinned Python dependencies
 ├── start.sh             # One-command start (Linux/macOS)
 ├── start.bat            # One-command start (Windows)
 └── docs.md              # Full technical documentation
@@ -234,17 +237,15 @@ cloakchat/
 }
 ```
 
-Returns an SSE stream of events. See `docs.md` for the full event schema.
+Returns an SSE stream of events. See `docs.md` for the full event schema (including `detection_reasoning` and `reconstruction_verification`).
+
+### `POST /api/chat/clarify`
+
+Used when the UI receives a `clarification_required` event. User choices are saved to the **Playbook** (persisted in `data/playbook.json`) for future turns.
 
 ### `GET /api/config`
 
-Returns the active config with API keys masked.
-
----
-
-## Security Note — LiteLLM
-
-LiteLLM versions `1.82.7` and `1.82.8` were compromised in a supply-chain attack (CVE-2026-33634). This project pins a safe version (`1.83.14`) in `requirements.txt`. Always install from the lockfile and verify before upgrading.
+Returns the active config. Password inputs hide keys in the UI, but real values round-trip through the API.
 
 ---
 

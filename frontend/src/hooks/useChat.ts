@@ -1,6 +1,7 @@
 import { useRef } from "react"
 import { useAppStore } from "@/stores/appStore"
 import { useSSE } from "./useSSE"
+import type { ClarificationOption } from "@/types"
 
 export function useChat() {
   const {
@@ -17,6 +18,8 @@ export function useChat() {
     currentSessionId,
     setCurrentSessionId,
     setSessions,
+    setPendingClarification,
+    clearPendingClarification,
   } = useAppStore()
 
   // Capture anonymized message and new entity entries mid-stream
@@ -24,14 +27,15 @@ export function useChat() {
   const newEntriesRef = useRef<Record<string, string>>({})
   const anonymizedResponseRef = useRef<string>("")
 
-  const { connect, disconnect } = useSSE('/api/chat', (data: unknown) => {
+  const { connect, disconnect } = useSSE((data: unknown) => {
     const event = data as Record<string, unknown>
 
     switch (event.type) {
       case 'detection':
+      case 'detection_reasoning':
         addTraceEvent({
           id: crypto.randomUUID(),
-          type: 'detection',
+          type: event.type as string,
           content: event,
           timestamp: new Date().toISOString()
         })
@@ -81,8 +85,49 @@ export function useChat() {
         })
         break
 
+      case 'reconstruction_verification':
+        addTraceEvent({
+          id: crypto.randomUUID(),
+          type: 'reconstruction_verification',
+          content: event,
+          timestamp: new Date().toISOString()
+        })
+        break
+
       case 'entity_map_update':
         newEntriesRef.current = (event.new_entries as Record<string, string>) ?? {}
+        break
+
+      case 'clarification_required': {
+        const store = useAppStore.getState()
+        const currentGroup = store.traceGroups.find(g => g.id === store.currentRequestId)
+        setPendingClarification({
+          requestId: store.currentRequestId ?? crypto.randomUUID(),
+          message: currentGroup?.userMessage || "",
+          entity: event.entity as string,
+          entityType: event.entity_type as string,
+          reason: event.reason as string | undefined,
+          question: event.question as string,
+          suggestedReplacement: event.suggested_replacement as string | undefined,
+          options: (event.options as ClarificationOption[]) ?? [],
+        })
+        setStatus('awaiting_clarification', `Waiting for clarification about ${event.entity as string}`)
+        addTraceEvent({
+          id: crypto.randomUUID(),
+          type: 'clarification_required',
+          content: event,
+          timestamp: new Date().toISOString()
+        })
+        break
+      }
+
+      case 'playbook_updated':
+        addTraceEvent({
+          id: crypto.randomUUID(),
+          type: 'playbook_updated',
+          content: event,
+          timestamp: new Date().toISOString()
+        })
         break
 
       case 'done':
@@ -97,6 +142,7 @@ export function useChat() {
         anonymizedResponseRef.current = ""
         newEntriesRef.current = {}
 
+        clearPendingClarification()
         setStatus('ready')
         addTraceEvent({
           id: crypto.randomUUID(),
@@ -165,7 +211,7 @@ export function useChat() {
   })
 
   const sendMessage = (content: string) => {
-    if (status === 'processing') return
+    if (status === 'processing' || status === 'awaiting_clarification') return
 
     // Ensure we have a session ID
     if (!currentSessionId) {
@@ -183,10 +229,36 @@ export function useChat() {
     })
 
     setStatus('processing')
-    connect({
+    connect('/api/chat', {
+      request_id: requestId,
       message: content,
       history: anonymizedHistory,
       entity_map: entityMap,
+    })
+  }
+
+  const submitClarification = (option: ClarificationOption, remember: boolean) => {
+    const store = useAppStore.getState()
+    const clarification = store.pendingClarification
+    if (!clarification) return
+
+    clearPendingClarification()
+    setStatus('processing', `Applying clarification for ${clarification.entity}`)
+    setCloudStreamingContent("")
+
+    connect('/api/chat/clarify', {
+      request_id: clarification.requestId,
+      message: clarification.message,
+      history: store.anonymizedHistory,
+      entity_map: store.entityMap,
+      clarification: {
+        original: clarification.entity,
+        entity_type: clarification.entityType,
+        action: option.action,
+        resolution: option.resolution,
+        replacement: clarification.suggestedReplacement || "",
+        remember,
+      },
     })
   }
 
@@ -199,6 +271,7 @@ export function useChat() {
     anonymizedResponseRef.current = ""
     newEntriesRef.current = {}
     setCloudStreamingContent("")
+    clearPendingClarification()
   }
 
   const saveSession = () => {
@@ -240,5 +313,5 @@ export function useChat() {
     }).catch(console.error)
   }
 
-  return { sendMessage, stopGeneration, saveSession }
+  return { sendMessage, stopGeneration, saveSession, submitClarification }
 }

@@ -28,11 +28,11 @@ flowchart TD
     subgraph CORE["CORE PIPELINE — Pure Python"]
         direction TB
         Pipeline["pipeline.py — Orchestrator"]
-        Detection["detection.py — PII Detection"]
+        Detection["privacy_agent.py — PII Detection"]
         Replacement["replacement.py — Anonymization"]
         Validation["validate.py — Quality Check"]
         Reconstruction["reconstruction.py — PII Restoration"]
-        LLMFactory["llm.py — LiteLLM Factory"]
+        LLMFactory["llm.py — OpenAI-compatible Streaming"]
         Types["types.py — Replacement · EntityMap · PipelineResult"]
     end
 
@@ -79,7 +79,7 @@ flowchart TD
 
     C --> D["core/pipeline.py\nrun_streaming()"]
 
-    D --> E["core/detection.py\ndetect_pii()\n\nLocal LLM call with tool calling\nSkips already-known entities\nin existing entity_map"]
+    D --> E["core/privacy_agent.py\ndetect_pii_with_agent()\n\nTyped PydanticAI detection\nSkips already-known entities\nin existing entity_map"]
 
     E --> F{"New PII\nfound?"}
 
@@ -103,18 +103,22 @@ flowchart TD
 
     O --> P["core/reconstruction.py\nreconstruct()\n\nSwap placeholders → originals\nUsing full session EntityMap\n(prior turns + current turn)"]
 
-    P --> Q["Emit reconstruction SSE event\nFinal response with real names\nshown to user"]
+    P --> Q["core/privacy_agent.py\nverify_reconstruction_with_agent()\n\nLocal model checks for leaks\nand corrects deanonymization"]
 
-    Q --> R["Emit entity_map_update event\nnew_entries: { original: placeholder }\nanonymized_message: string"]
+    Q --> R["Emit reconstruction SSE event\nFinal response with real names\nshown to user"]
 
-    R --> S["Emit done event"]
+    R --> S["Emit reconstruction_verification event\nvalid: bool, leaks: list"]
 
-    S --> T["Frontend on done:\nupdateSession()\n• Append anonymized turns to history\n• Merge new entries into entityMap\n• Update X-Ray trace panel"]
+    S --> T["Emit entity_map_update event\nnew_entries: { original: placeholder }\nanonymized_message: string"]
 
-    T --> U([✅ Ready for next turn])
+    T --> U["Emit done event"]
+
+    U --> V["Frontend on done:\nupdateSession()\n• Append anonymized turns to history\n• Merge new entries into entityMap\n• Update X-Ray trace panel"]
+
+    V --> W([✅ Ready for next turn])
 
     style A fill:#7c3aed,color:white
-    style U fill:#059669,color:white
+    style W fill:#059669,color:white
     style N fill:#dc2626,color:white
     style K fill:#b91c1c,color:white
     style L fill:#065f46,color:white
@@ -135,7 +139,7 @@ flowchart TD
 
     S1 -->|"Backend starts pipeline"| S2
 
-    S2["DETECTING\ndetect_pii called on local LLM\nExisting entity_map passed in:\n→ Skip already-known entities\n→ Never reuse existing placeholders"]
+    S2["DETECTING\ndetect_pii_with_agent called\nExisting entity_map passed in:\n→ Skip already-known entities\n→ Never reuse existing placeholders"]
 
     S2 -->|"Returns new Replacement list"| S3
 
@@ -151,13 +155,17 @@ flowchart TD
 
     S5 -->|"Stream complete"| S6
 
-    S6["RECONSTRUCTING\nreconstruct swaps placeholders → originals\nUses merged map: prior turns + current turn\nEmits SSE: reconstruction"]
+    S6["RECONSTRUCTING\nreconstruct swaps placeholders → originals\nUses merged map: prior turns + current turn"]
 
-    S6 -->|"Emits entity_map_update + done"| S7
+    S6 -->|"Local model verifies response"| S7
 
-    S7["UPDATING SESSION STATE\nZustand store updated:\n• messages += reconstructed reply\n• anonymizedHistory += both sides of turn\n• entityMap = merged accumulated map\n• traceGroups += new X-Ray trace"]
+    S7["VERIFYING\nverify_reconstruction_with_agent\nchecks for leaks and corrects text\nEmits SSE: reconstruction, reconstruction_verification"]
 
-    S7 -->|"Ready for next turn"| START
+    S7 -->|"Emits entity_map_update + done"| S8
+
+    S8["UPDATING SESSION STATE\nZustand store updated:\n• messages += reconstructed reply\n• anonymizedHistory += both sides of turn\n• entityMap = merged accumulated map\n• traceGroups += new X-Ray trace"]
+
+    S8 -->|"Ready for next turn"| START
 ```
 
 ---
@@ -199,9 +207,11 @@ sequenceDiagram
         FE->>FE: Render streaming text
     end
 
-    Note over BE: reconstruct()
+    Note over BE: verify_reconstruction_with_agent()
     BE-->>FE: SSE: reconstruction<br/>{ text: "Wishing john and mandy..." }
     FE->>FE: Show final response to user
+
+    BE-->>FE: SSE: reconstruction_verification<br/>{ valid: true, leaks: [] }
 
     BE-->>FE: SSE: entity_map_update<br/>{ new_entries, anonymized_message }
 
@@ -262,6 +272,7 @@ classDiagram
         validation
         cloud_chunk
         reconstruction
+        reconstruction_verification
         entity_map_update
         done
     }
@@ -287,11 +298,11 @@ graph LR
 
     subgraph "Core Layer"
         pipeline["core/pipeline.py\nOrchestrator"]
-        detection["core/detection.py"]
+        detection["core/privacy_agent.py"]
         replacement["core/replacement.py"]
         validate["core/validate.py"]
         reconstruction["core/reconstruction.py"]
-        llm["core/llm.py\nLiteLLM"]
+        llm["core/llm.py\nOpenAI-compatible streaming"]
         types["core/types.py"]
     end
 
@@ -345,6 +356,6 @@ graph LR
 | **Privacy Guarantee** | Real PII is detected and replaced *locally*; cloud LLM only sees realistic fake substitutes |
 | **Multi-turn Safety** | `entity_map` accumulates across turns — same person always maps to same placeholder |
 | **Communication** | SSE (Server-Sent Events) for real-time streaming end-to-end |
-| **LLM Abstraction** | LiteLLM wraps all providers — local llama.cpp, Ollama, or any cloud OpenAI-compatible API |
+| **LLM Abstraction** | PydanticAI handles typed detection; OpenAI-compatible client handles streaming chat |
 | **Frontend State** | Zustand manages session: reconstructed messages, anonymized history, and entity map |
-| **Observability** | X-Ray panel shows every pipeline step live: detection, anonymization, validation, cloud output, reconstruction |
+| **Observability** | X-Ray panel shows every pipeline step live: detection, anonymization, validation, cloud output, reconstruction, verification |

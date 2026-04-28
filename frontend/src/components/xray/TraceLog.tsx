@@ -57,9 +57,64 @@ function AnonymiseStep({ group }: { group: TraceGroup }) {
   )
 }
 
+function ReasoningStep({ group }: { group: TraceGroup }) {
+  const reasoning = group.events.find(e => e.type === 'detection_reasoning')
+  const content = reasoning
+    ? ((reasoning.content as Record<string, unknown>)?.content as string)
+    : ""
+  if (!content) return null
+
+  return (
+    <StepCard label="Reasoning" color="orange">
+      <div className="max-h-40 overflow-y-auto rounded bg-[var(--color-base-100)] dark:bg-[var(--color-base-800)] p-2 text-xs whitespace-pre-wrap">
+        {content}
+      </div>
+    </StepCard>
+  )
+}
+
+function ClarificationStep({ group }: { group: TraceGroup }) {
+  const clarification = group.events.find(e => e.type === 'clarification_required')
+  const playbookUpdate = group.events.find(e => e.type === 'playbook_updated')
+
+  if (!clarification && !playbookUpdate) return null
+
+  return (
+    <StepCard label="Clarification" color="orange">
+      <div className="space-y-2 text-xs">
+        {clarification && (
+          <div className="rounded bg-[var(--color-base-100)] dark:bg-[var(--color-base-800)] p-2">
+            <div className="font-semibold">Prompted user</div>
+            <div className="mt-1">
+              {((clarification.content as Record<string, unknown>)?.question as string) || "Clarification required"}
+            </div>
+          </div>
+        )}
+        {playbookUpdate && (
+          <div className="rounded bg-[var(--color-base-100)] dark:bg-[var(--color-base-800)] p-2">
+            <div className="font-semibold">Applied rule</div>
+            <div className="mt-1">
+              {(() => {
+                const content = playbookUpdate.content as Record<string, unknown>
+                const entry = content.entry as Record<string, unknown> | undefined
+                const action = entry?.action as string | undefined
+                const original = entry?.original as string | undefined
+                const remembered = content.remembered ? "and saved to playbook" : "for this request only"
+                return original ? `"${original}" -> ${action} (${remembered})` : "Playbook updated"
+              })()}
+            </div>
+          </div>
+        )}
+      </div>
+    </StepCard>
+  )
+}
+
 function CloudStep({ group, cloudContent, isActive }: { group: TraceGroup; cloudContent: string; isActive: boolean }) {
   const hasCloud = group.events.some(e => e.type === 'cloud_chunk') || (isActive)
   if (!hasCloud && !cloudContent) return null
+  const entityMap = getEntityMap(group)
+  const placeholders = Object.values(entityMap)
 
   return (
     <StepCard label="Cloud" color="purple">
@@ -77,7 +132,9 @@ function CloudStep({ group, cloudContent, isActive }: { group: TraceGroup; cloud
         )}
       </div>
       <div className="max-h-40 overflow-y-auto rounded bg-white dark:bg-[var(--color-base-950)] p-2 text-xs text-[var(--color-base-700)] dark:text-[var(--color-base-300)] whitespace-pre-wrap">
-        {cloudContent || "Waiting..."}
+        {cloudContent ? (
+          <HighlightedText text={cloudContent} terms={placeholders} variant="placeholder" />
+        ) : "Waiting..."}
       </div>
     </StepCard>
   )
@@ -87,11 +144,90 @@ function DeanonymiseStep({ group }: { group: TraceGroup }) {
   const reconstruction = group.events.find(e => e.type === 'reconstruction')
   if (!reconstruction) return null
   const text = (reconstruction.content as Record<string, unknown>)?.text as string
+  const entityMap = getEntityMap(group)
+  const originals = Object.keys(entityMap)
   return (
     <StepCard label="Deanonymise" color="green">
-      <pre className="whitespace-pre-wrap font-mono text-xs">{text}</pre>
+      <pre className="whitespace-pre-wrap font-mono text-xs">
+        <HighlightedText text={text} terms={originals} variant="pii" />
+      </pre>
     </StepCard>
   )
+}
+
+function VerificationStep({ group }: { group: TraceGroup }) {
+  const verification = group.events.find(e => e.type === 'reconstruction_verification')
+  if (!verification) return null
+  const content = verification.content as Record<string, unknown>
+  const valid = Boolean(content.valid)
+  const leaks = (content.leaks as string[] | undefined) ?? []
+  const notes = (content.notes as string | undefined) ?? ""
+  const reasoning = (content.reasoning as string | undefined) ?? ""
+
+  return (
+    <StepCard label="Verification" color={valid ? "green" : "red"}>
+      <div className="space-y-2 text-xs">
+        <Badge variant="outline" className={cn(valid ? "border-[var(--color-green-400)] text-[var(--color-green-400)]" : "border-[var(--color-red-400)] text-[var(--color-red-400)]")}>
+          {valid ? "No leaks detected" : "Needs attention"}
+        </Badge>
+        {notes && <div>{notes}</div>}
+        {leaks.length > 0 && (
+          <div className="rounded bg-[var(--color-base-100)] dark:bg-[var(--color-base-800)] p-2">
+            <div className="font-semibold">Leaks</div>
+            <div className="mt-1 font-mono">{leaks.join(", ")}</div>
+          </div>
+        )}
+        {reasoning && (
+          <div className="max-h-32 overflow-y-auto rounded bg-[var(--color-base-100)] dark:bg-[var(--color-base-800)] p-2 whitespace-pre-wrap">
+            {reasoning}
+          </div>
+        )}
+      </div>
+    </StepCard>
+  )
+}
+
+function HighlightedText({ text, terms, variant }: { text: string; terms: string[]; variant: "pii" | "placeholder" }) {
+  const cleanTerms = terms.filter(Boolean).sort((a, b) => b.length - a.length)
+  if (!text || cleanTerms.length === 0) return <>{text}</>
+
+  const pattern = new RegExp(`(${cleanTerms.map(escapeRegExp).join("|")})`, "gi")
+  const parts = text.split(pattern)
+  return (
+    <>
+      {parts.map((part, index) => {
+        const matched = cleanTerms.some(term => term.toLowerCase() === part.toLowerCase())
+        if (!matched) return <span key={index}>{part}</span>
+        return (
+          <mark
+            key={index}
+            className={cn(
+              "rounded px-1 py-0.5 font-semibold",
+              variant === "pii"
+                ? "bg-[var(--color-green-100)] text-[var(--color-green-700)] dark:bg-[var(--color-green-900)] dark:text-[var(--color-green-200)]"
+                : "bg-[var(--color-purple-100)] text-[var(--color-purple-700)] dark:bg-[var(--color-purple-900)] dark:text-[var(--color-purple-200)]"
+            )}
+          >
+            {part}
+          </mark>
+        )
+      })}
+    </>
+  )
+}
+
+function getEntityMap(group: TraceGroup): Record<string, string> {
+  const reconstruction = group.events.find(e => e.type === 'reconstruction')
+  const fromReconstruction = (reconstruction?.content as Record<string, unknown> | undefined)?.entity_map as Record<string, string> | undefined
+  if (fromReconstruction) return fromReconstruction
+
+  const detection = group.events.find(e => e.type === 'detection')
+  const replacements = ((detection?.content as Record<string, unknown> | undefined)?.replacements as Array<{original: string; placeholder: string}> | undefined) ?? []
+  return Object.fromEntries(replacements.map(item => [item.original, item.placeholder]))
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 // --- Generic step card wrapper ---
@@ -137,7 +273,7 @@ function StepCard({ label, color, children }: { label: string; color: StepColor;
 function TraceGroupDisplay({ group }: { group: TraceGroup }) {
   const { toggleTraceGroup, cloudStreamingContent, status } = useAppStore()
 
-  const isActive = status === 'processing' && !group.isCollapsed
+  const isActive = (status === 'processing' || status === 'awaiting_clarification') && !group.isCollapsed
 
   return (
     <Collapsible
@@ -169,6 +305,7 @@ function TraceGroupDisplay({ group }: { group: TraceGroup }) {
               className={cn(
                 "text-xs",
                 group.summary.status === 'processing' && "border-[var(--color-yellow-400)] text-[var(--color-yellow-400)]",
+                group.summary.status === 'awaiting_clarification' && "border-[var(--color-orange-400)] text-[var(--color-orange-400)]",
                 group.summary.status === 'completed'  && "border-[var(--color-green-400)] text-[var(--color-green-400)]",
                 group.summary.status === 'error'      && "border-[var(--color-red-400)] text-[var(--color-red-400)]",
               )}
@@ -182,9 +319,12 @@ function TraceGroupDisplay({ group }: { group: TraceGroup }) {
       <CollapsibleContent>
         <div className="flex flex-col gap-2 p-3 pt-0 border-t border-[var(--color-base-200)] dark:border-[var(--color-base-800)]">
           <InputStep group={group} />
+          <ReasoningStep group={group} />
           <AnonymiseStep group={group} />
+          <ClarificationStep group={group} />
           <CloudStep group={group} cloudContent={isActive ? cloudStreamingContent : group.events.filter(e => e.type === 'cloud_chunk').map(e => e.content as string).join('')} isActive={isActive} />
           <DeanonymiseStep group={group} />
+          <VerificationStep group={group} />
 
           {group.events.length === 0 && (
             <div className="text-center text-sm text-[var(--color-base-400)] py-4">Processing...</div>

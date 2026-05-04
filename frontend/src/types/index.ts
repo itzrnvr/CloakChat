@@ -64,7 +64,6 @@ export interface AppConfig {
   testing: {
     simulate_cloud_with_detection: boolean
   }
-  system_prompt?: string
   user_context?: string
 }
 

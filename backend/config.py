@@ -15,6 +15,7 @@ class Config:
 
 
 _USER_SETTINGS_PATH = Path("data") / "user_settings.json"
+_SYSTEM_PROMPT_PATH = Path("prompts") / "system.md"
 
 
 def _deep_merge(base: dict, overrides: dict) -> dict:
@@ -35,10 +36,14 @@ def _load_json(path: Path) -> dict:
     return {}
 
 
-def load_config(path: str = "config.json") -> Config:
+def load_config(
+    path: str = "config.json",
+    user_settings_path: Path | None = None,
+    system_prompt_path: Path | None = None,
+) -> Config:
     """Load config from config.json merged with user_settings.json. Env vars override both."""
     base = _load_json(Path(path))
-    user = _load_json(_USER_SETTINGS_PATH)
+    user = _load_json(user_settings_path or _USER_SETTINGS_PATH)
     raw = _deep_merge(base, user)
 
     detection = raw.get("detection", {})
@@ -55,20 +60,28 @@ def load_config(path: str = "config.json") -> Config:
     if url := os.getenv("CLOUD_BASE_URL"):
         cloud["base_url"] = url
 
+    prompt_path = system_prompt_path or _SYSTEM_PROMPT_PATH
+    system_prompt = (
+        prompt_path.read_text(encoding="utf-8").strip()
+        if prompt_path.exists()
+        else "You are a PII detection system. Identify all personally identifiable information in the text and return structured replacements."
+    )
+
     return Config(
         detection=detection,
         cloud=cloud,
         server=server,
         simulate_cloud=raw.get("simulate_cloud", False),
-        system_prompt=raw.get("system_prompt", "You are a PII detection system. Identify all personally identifiable information in the text and return structured replacements."),
+        system_prompt=system_prompt,
         user_context=raw.get("user_context", ""),
     )
 
 
-def save_user_settings(overrides: dict) -> None:
+def save_user_settings(overrides: dict, path: Path | None = None) -> None:
     """Write sparse overrides to user_settings.json."""
-    _USER_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _USER_SETTINGS_PATH.with_suffix(".tmp")
+    target = path or _USER_SETTINGS_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".tmp")
     with open(tmp, "w") as f:
         json.dump(overrides, f, indent=2)
-    tmp.replace(_USER_SETTINGS_PATH)
+    tmp.replace(target)

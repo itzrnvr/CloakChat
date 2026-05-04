@@ -21,13 +21,21 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
-def append_debug_trace(event_type: str, payload: dict[str, Any], request_id: str | None = None) -> None:
-    _DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+def append_debug_trace(
+    event_type: str,
+    payload: dict[str, Any],
+    request_id: str | None = None,
+    trace_dir: Path | None = None,
+) -> None:
+    """Append a debug trace record as JSONL."""
+    dir_path = trace_dir or _DEBUG_DIR
+    file_path = dir_path / "debug-trace.jsonl"
+    dir_path.mkdir(parents=True, exist_ok=True)
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "request_id": request_id,
         "event_type": event_type,
         "payload": _json_safe(payload),
     }
-    with open(_DEBUG_FILE, "a", encoding="utf-8") as f:
+    with open(file_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")

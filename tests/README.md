@@ -4,8 +4,8 @@ This directory contains tests for the CloakChat project.
 
 ## Structure
 
-- `backend/`: Python tests for the FastAPI backend and core pipeline logic.
-- `frontend/`: Vitest/React Testing Library tests for the UI components and stores.
+- `tests/test_*.py`: Python tests for the FastAPI backend and core pipeline logic.
+- `frontend/tests/`: Vitest/React Testing Library tests for the UI components and stores.
 
 ## Running Tests
 

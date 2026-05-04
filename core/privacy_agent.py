@@ -1,5 +1,8 @@
+import asyncio
 import json
 import logging
+import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from pydantic_ai import Agent, NativeOutput, PromptedOutput, StructuredDict, ToolOutput
@@ -10,6 +13,18 @@ from backend.debug_trace import append_debug_trace
 from core.types import Ambiguity, DetectionResult, PlaybookEntry, Replacement
 
 logger = logging.getLogger("cloakchat.privacy_agent")
+
+# PydanticAI's run_sync() calls run_until_complete(), which crashes inside
+# FastAPI's already-running event loop. Run agent calls in a separate thread
+# with their own event loop instead.
+_thread_pool = ThreadPoolExecutor(max_workers=4)
+
+
+def _run_agent(agent: Agent, prompt: str, model_settings: dict) -> Any:
+    """Run a PydanticAI agent in a background thread with a fresh event loop."""
+    def _target():
+        return asyncio.run(agent.run(prompt, model_settings=model_settings))
+    return _thread_pool.submit(_target).result()
 
 _KNOWN_MODEL_KEYS = {
     "model",
@@ -56,6 +71,14 @@ _PUBLIC_FIGURE_ALIASES = {
     "modi": "Narendra Modi",
     "narendra": "Narendra Modi",
     "taylor": "Taylor Swift",
+}
+
+_RELATIONSHIP_VERBS = {
+    "wed",
+    "weds",
+    "marry",
+    "marries",
+    "married",
 }
 
 
@@ -186,9 +209,10 @@ def detect_pii_with_agent(
         request_id=request_id,
     )
 
-    result = agent.run_sync(
+    result = _run_agent(
+        agent,
         _build_user_prompt(text),
-        model_settings=model_settings,
+        model_settings,
     )
     append_debug_trace(
         "privacy_agent_response",
@@ -201,7 +225,9 @@ def detect_pii_with_agent(
         request_id=request_id,
     )
 
-    detected = _apply_alias_policy(text, _to_detection_result(text, result.output), playbook_entries or [])
+    detected = _to_detection_result(text, result.output)
+    detected = _apply_alias_policy(text, detected, playbook_entries or [])
+    detected = _apply_relationship_name_policy(text, detected, playbook_entries or [])
     detected.reasoning = _extract_reasoning(result)
     if existing_map:
         detected = DetectionResult(
@@ -209,7 +235,7 @@ def detect_pii_with_agent(
             ambiguities=[a for a in detected.ambiguities if a.original not in existing_map],
             reasoning=detected.reasoning,
         )
-    return _apply_playbook_rules(text, detected, playbook_entries or [])
+    return _dedupe_replacement_placeholders(_apply_playbook_rules(text, detected, playbook_entries or []))
 
 
 def verify_reconstruction_with_agent(
@@ -259,10 +285,11 @@ def verify_reconstruction_with_agent(
     )
 
     try:
-        result = agent.run_sync(
+        result = _run_agent(
+            agent,
             "Verify this deanonymization result and return the structured verification output:\n"
             + json.dumps(payload, ensure_ascii=False, indent=2),
-            model_settings=_model_settings(cfg),
+            _model_settings(cfg),
         )
     except Exception as e:
         append_debug_trace(
@@ -358,12 +385,18 @@ def _build_instructions(
     instructions = (
         "You are CloakChat's privacy detection agent. Your job is to decide which entities can be anonymized immediately and which entities need clarification.\n"
         "Return a typed privacy detection result for exactly one user message.\n"
-        "Use replacements only for private PII that should be anonymized now.\n"
-        "Use ambiguities when user intent decides whether the entity should be kept or anonymized.\n"
-        "Likely public figures, celebrities, politicians, athletes, actors, musicians, and other notable people are ambiguities unless covered by the playbook.\n"
-        "For PERSON names, prefer ambiguity when the full name plausibly refers to a public figure.\n"
-        "Common public-figure aliases and one-word mentions must also be ambiguities when context is unclear: amitabh, shahrukh, srk, modi, taylor.\n"
-        "Examples that must be ambiguities when context is unclear: Amitabh Bachchan, Tom Cruise, Shah Rukh Khan, Narendra Modi, Taylor Swift, amitabh, shahrukh.\n"
+        "\n"
+        "CRITICAL RULE — ALL PERSON names go to ambiguities. NEVER put a PERSON name in replacements.\n"
+        "Every PERSON name (first name, last name, full name, or alias) must go to ambiguities so the user can decide whether it is a public figure (keep) or a private individual (anonymize).\n"
+        "This includes common names, unusual names, single-word names, and full names — regardless of how likely they are to be private or public.\n"
+        "\n"
+        "Replacements: ONLY non-PERSON PII types: EMAIL, PHONE, SSN, CREDIT_CARD, ADDRESS, and ORGANIZATION names.\n"
+        "\n"
+        "Ambiguities exclusions: Do NOT flag generic titles, roles, or unnamed references. Only proper names are ambiguities.\n"
+        "These are NOT ambiguities: 'the president', 'my boss', 'the doctor', 'my friend', 'a colleague'.\n"
+        "These ARE ambiguities: 'Obama', 'John', 'Priya', 'Einstein', any specific named person.\n"
+        "Lowercase words used as names in relationship/event phrases are also PERSON ambiguities, e.g. 'clair weds john'.\n"
+        "\n"
         "The original field must be an exact substring copied from the user message.\n"
         "Never output schema placeholder values like string, value, text, unknown, or ellipses.\n"
         "Every replacement must be realistic, fictional, and different from the original.\n"
@@ -416,6 +449,10 @@ def _to_detection_result(text: str, output: dict[str, Any]) -> DetectionResult:
         entity_type = _entity_type(item.get("entity_type"))
         if not _valid_original(text, original):
             continue
+        # Skip generic references — only proper names are valid PERSON ambiguities.
+        # A proper name starts with a capital letter and is at most 3 words.
+        if entity_type == "PERSON" and (not original[:1].isupper() or len(original.split()) > 3):
+            continue
         suggested = _clean(item.get("suggested_replacement"))
         if _invalid(suggested) or suggested == original:
             suggested = _placeholder(entity_type, len(ambiguities) + 1)
@@ -430,7 +467,24 @@ def _to_detection_result(text: str, output: dict[str, Any]) -> DetectionResult:
 
     ambiguous_keys = {(a.original, a.entity_type) for a in ambiguities}
     replacements = [r for r in replacements if (r.original, r.entity_type) not in ambiguous_keys]
-    return DetectionResult(replacements=replacements, ambiguities=ambiguities)
+
+    # Enforce rule: all PERSON names must be ambiguities, not replacements.
+    # The user decides whether a person is public (keep) or private (anonymize).
+    person_replacements = [r for r in replacements if r.entity_type == "PERSON"]
+    non_person_replacements = [r for r in replacements if r.entity_type != "PERSON"]
+    for r in person_replacements:
+        if (r.original, r.entity_type) not in ambiguous_keys:
+            ambiguities.append(
+                Ambiguity(
+                    original=r.original,
+                    entity_type=r.entity_type,
+                    suggested_replacement=r.placeholder,
+                    reason="Person name — user must decide if public figure or private individual.",
+                )
+            )
+            ambiguous_keys.add((r.original, r.entity_type))
+
+    return DetectionResult(replacements=non_person_replacements, ambiguities=ambiguities)
 
 
 def _apply_alias_policy(
@@ -529,6 +583,83 @@ def _apply_playbook_rules(
     return DetectionResult(replacements=replacements, ambiguities=ambiguities)
 
 
+def _dedupe_replacement_placeholders(result: DetectionResult) -> DetectionResult:
+    """Ensure every original maps to a distinct placeholder."""
+    used: set[str] = set()
+    replacements: list[Replacement] = []
+    for item in result.replacements:
+        placeholder = item.placeholder
+        if not placeholder or placeholder in used:
+            placeholder = _next_placeholder(item.entity_type, used)
+        used.add(placeholder)
+        replacements.append(
+            Replacement(
+                original=item.original,
+                placeholder=placeholder,
+                entity_type=item.entity_type,
+            )
+        )
+
+    return DetectionResult(
+        replacements=replacements,
+        ambiguities=result.ambiguities,
+        reasoning=result.reasoning,
+    )
+
+
+def _apply_relationship_name_policy(
+    text: str,
+    result: DetectionResult,
+    playbook_entries: list[PlaybookEntry],
+) -> DetectionResult:
+    """Add PERSON ambiguities for simple marriage phrases the model missed."""
+    playbook_names = {entry.original.lower() for entry in playbook_entries if entry.entity_type == "PERSON"}
+    existing_names = {a.original.lower() for a in result.ambiguities}
+    existing_names.update(r.original.lower() for r in result.replacements if r.entity_type == "PERSON")
+
+    ambiguities = list(result.ambiguities)
+    used_placeholders = {entry.replacement for entry in playbook_entries if entry.replacement}
+    used_placeholders.update(a.suggested_replacement for a in ambiguities if a.suggested_replacement)
+    used_placeholders.update(r.placeholder for r in result.replacements if r.placeholder)
+    for name in _relationship_name_candidates(text):
+        key = name.lower()
+        if key in existing_names or key in playbook_names:
+            continue
+        suggested = _next_placeholder("PERSON", used_placeholders)
+        used_placeholders.add(suggested)
+        ambiguities.append(
+            Ambiguity(
+                original=name,
+                entity_type="PERSON",
+                suggested_replacement=suggested,
+                reason="Name in a relationship phrase — user must decide if public figure or private individual.",
+            )
+        )
+        existing_names.add(key)
+
+    return DetectionResult(
+        replacements=result.replacements,
+        ambiguities=ambiguities,
+        reasoning=result.reasoning,
+    )
+
+
+def _relationship_name_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    name = r"[A-Za-z][A-Za-z'-]*"
+    verb = "|".join(sorted(_RELATIONSHIP_VERBS, key=len, reverse=True))
+    patterns = [
+        rf"\b({name})\s+(?:{verb})\s+({name})\b",
+        rf"\b({name})\s+and\s+({name})\s+(?:{verb})\b",
+    ]
+
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            candidates.extend(match.groups())
+
+    return [candidate for candidate in candidates if not _invalid(candidate)]
+
+
 def _clean(value: object) -> str:
     return "" if value is None else str(value).strip()
 
@@ -554,6 +685,15 @@ def _placeholder(entity_type: str, index: int) -> str:
     if entity_type == "PERSON":
         return f"Person_{index}"
     return f"{entity_type or 'PII'}_{index}"
+
+
+def _next_placeholder(entity_type: str, used: set[str]) -> str:
+    index = 1
+    while True:
+        candidate = _placeholder(entity_type, index)
+        if candidate not in used:
+            return candidate
+        index += 1
 
 
 def _exact_alias_matches(text: str, alias: str) -> list[str]:

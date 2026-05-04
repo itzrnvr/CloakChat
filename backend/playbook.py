@@ -9,14 +9,12 @@ _DATA_DIR = Path(__file__).parent.parent / "data"
 _PLAYBOOK_FILE = _DATA_DIR / "playbook.json"
 
 
-def _ensure_data_dir() -> None:
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def load_playbook() -> list[PlaybookEntry]:
-    if not _PLAYBOOK_FILE.exists():
+def load_playbook(path: Path | None = None) -> list[PlaybookEntry]:
+    """Load playbook entries from JSON file."""
+    target = path or _PLAYBOOK_FILE
+    if not target.exists():
         return []
-    with open(_PLAYBOOK_FILE) as f:
+    with open(target) as f:
         raw = json.load(f)
     return [
         PlaybookEntry(
@@ -32,8 +30,10 @@ def load_playbook() -> list[PlaybookEntry]:
     ]
 
 
-def save_playbook_entry(entry: PlaybookEntry) -> None:
-    entries = load_playbook()
+def save_playbook_entry(entry: PlaybookEntry, path: Path | None = None) -> None:
+    """Add or update a playbook entry and persist to disk."""
+    target = path or _PLAYBOOK_FILE
+    entries = load_playbook(path)
     filtered = [
         existing
         for existing in entries
@@ -43,8 +43,9 @@ def save_playbook_entry(entry: PlaybookEntry) -> None:
         )
     ]
     filtered.append(entry)
+    filtered = _dedupe_entry_replacements(filtered)
 
-    _ensure_data_dir()
+    target.parent.mkdir(parents=True, exist_ok=True)
     payload = []
     now = datetime.now(timezone.utc).isoformat()
     for item in filtered:
@@ -52,7 +53,48 @@ def save_playbook_entry(entry: PlaybookEntry) -> None:
         data["updatedAt"] = now
         payload.append(data)
 
-    tmp = _PLAYBOOK_FILE.with_suffix(".tmp")
+    tmp = target.with_suffix(".tmp")
     with open(tmp, "w") as f:
         json.dump(payload, f, indent=2)
-    tmp.replace(_PLAYBOOK_FILE)
+    tmp.replace(target)
+
+
+def _dedupe_entry_replacements(entries: list[PlaybookEntry]) -> list[PlaybookEntry]:
+    used: set[str] = set()
+    result: list[PlaybookEntry] = []
+    for entry in entries:
+        replacement = entry.replacement
+        if entry.action == "anonymize":
+            if not replacement or replacement in used:
+                replacement = _next_replacement(entry.entity_type, used)
+            used.add(replacement)
+        result.append(
+            PlaybookEntry(
+                original=entry.original,
+                entity_type=entry.entity_type,
+                action=entry.action,
+                resolution=entry.resolution,
+                replacement=replacement,
+                note=entry.note,
+            )
+        )
+    return result
+
+
+def _next_replacement(entity_type: str, used: set[str]) -> str:
+    index = 1
+    while True:
+        candidate = _placeholder(entity_type, index)
+        if candidate not in used:
+            return candidate
+        index += 1
+
+
+def _placeholder(entity_type: str, index: int) -> str:
+    if entity_type == "EMAIL":
+        return f"email_{index}@placeholder.com"
+    if entity_type == "PHONE":
+        return f"555-{index:03d}-0000"
+    if entity_type == "PERSON":
+        return f"Person_{index}"
+    return f"{entity_type or 'PII'}_{index}"

@@ -135,15 +135,6 @@ export function ConfigPanel({ config, onConfigChange }: ConfigPanelProps) {
           </CollapsibleTrigger>
           <CollapsibleContent className="pt-4 space-y-4">
             <div className="space-y-2">
-              <Label className="text-xs">System Prompt</Label>
-              <textarea
-                value={localConfig.system_prompt || ""}
-                onChange={(e) => setLocalConfig(prev => ({ ...prev, system_prompt: e.target.value }))}
-                placeholder="Instructions for the PII detection model..."
-                className="w-full h-32 rounded-md border border-[var(--color-base-200)] dark:border-[var(--color-base-800)] bg-[var(--color-base-50)] dark:bg-[var(--color-base-900)] px-3 py-2 text-xs font-mono resize-y focus:outline-none focus:ring-1 focus:ring-[var(--color-blue-400)]"
-              />
-            </div>
-            <div className="space-y-2">
               <Label className="text-xs">User Corrections / Context</Label>
               <p className="text-[10px] text-[var(--color-base-400)]">
                 Added to every detection call. Use for correcting misidentified entities (e.g. "Tom Cruise is always an actor name, not a person").

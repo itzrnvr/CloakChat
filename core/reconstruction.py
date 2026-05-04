@@ -19,22 +19,29 @@ def reconstruct(text: str, entity_map: EntityMap) -> str:
         original = entity_map.reverse[placeholder]
         possessive_original = original + ("'" if original.endswith("s") else "'s")
 
-        variants = [
-            (placeholder + "'s", possessive_original),
-            (placeholder + "'", possessive_original),
-            (placeholder + "s", possessive_original),
-            (placeholder, original),
-        ]
-
-        lower_placeholder = placeholder[:1].lower() + placeholder[1:]
-        if lower_placeholder != placeholder:
+        variants = []
+        for base in _placeholder_bases(placeholder):
             variants.extend([
-                (lower_placeholder + "'s", possessive_original),
-                (lower_placeholder + "'", possessive_original),
-                (lower_placeholder + "s", possessive_original),
-                (lower_placeholder, original),
+                (base + "'s", possessive_original),
+                (base + "'", possessive_original),
+                (base + "s", possessive_original),
+                (base, original),
             ])
 
         for source, target in variants:
             result = result.replace(source, _match_case(source, target))
     return result
+
+
+def _placeholder_bases(placeholder: str) -> list[str]:
+    bases = [placeholder]
+    compact = placeholder.replace("_", "")
+    if compact != placeholder:
+        bases.append(compact)
+
+    for base in list(bases):
+        lower = base[:1].lower() + base[1:]
+        if lower != base:
+            bases.append(lower)
+
+    return bases

@@ -2,35 +2,35 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 router = APIRouter()
 logger = logging.getLogger("cloakchat.sessions")
 
-# Resolve data dir relative to project root (where backend/ is located)
 _DATA_DIR = Path(__file__).parent.parent.parent / "data"
 _SESSIONS_FILE = _DATA_DIR / "sessions.json"
-logger.info(f"Sessions file: {_SESSIONS_FILE}")
+logger.info("Sessions file: %s", _SESSIONS_FILE)
 
 
-def _ensure_data_dir() -> None:
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _load_sessions() -> list[dict]:
-    if not _SESSIONS_FILE.exists():
+def _load_sessions(path: Path | None = None) -> list:
+    """Load sessions from JSON file."""
+    target = path or _SESSIONS_FILE
+    if not target.exists():
         return []
-    with open(_SESSIONS_FILE) as f:
+    with open(target) as f:
         return json.load(f)
 
 
-def _save_sessions(sessions: list[dict]) -> None:
-    _ensure_data_dir()
-    tmp = _SESSIONS_FILE.with_suffix(".tmp")
+def _save_sessions(sessions: list, path: Path | None = None) -> None:
+    """Persist sessions list to JSON file."""
+    target = path or _SESSIONS_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".tmp")
     with open(tmp, "w") as f:
         json.dump(sessions, f, indent=2)
-    tmp.replace(_SESSIONS_FILE)
+    tmp.replace(target)
 
 
 class SessionSummary(BaseModel):

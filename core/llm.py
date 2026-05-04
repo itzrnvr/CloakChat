@@ -9,7 +9,14 @@ from backend.debug_trace import append_debug_trace
 
 logger = logging.getLogger("cloakchat.llm")
 
-_KNOWN_CLOUD_KEYS = {"model", "base_url", "api_key", "temperature", "max_tokens", "timeout"}
+# Keys consumed directly by this module (never forwarded to OpenAI).
+_KNOWN_CLOUD_KEYS = {
+    "model", "base_url", "api_key", "temperature", "max_tokens", "timeout",
+}
+# Detection-only keys that must NOT leak into OpenAI when simulate_cloud=True.
+_PII_AGENT_KEYS = {
+    "output_mode", "tool_mode", "verification_output_mode", "strict",
+}
 
 
 def _extract_extra_params(cfg: dict, known_keys: set[str]) -> dict:
@@ -38,7 +45,7 @@ def create_cloud_llm(cfg: dict, request_id: str | None = None) -> Callable[..., 
     temperature = cfg.get("temperature")
     max_tokens = cfg.get("max_tokens", 1024)
     timeout = cfg.get("timeout", 60)
-    extra = _extract_extra_params(cfg, _KNOWN_CLOUD_KEYS)
+    extra = _extract_extra_params(cfg, _KNOWN_CLOUD_KEYS | _PII_AGENT_KEYS)
 
     logger.info("[CLOUD_LLM] model=%s base_url=%s", model, cfg.get("base_url"))
     if extra:

@@ -17,7 +17,8 @@ def _get_client(provider: str, model: str, api_key: str):
     cache_key = (provider, model)
     if cache_key not in _client_cache:
         _client_cache[cache_key] = instructor.from_provider(
-            f"{provider}/{model}", api_key=api_key
+            f"{provider}/{model}",
+            api_key=api_key,
         )
     return _client_cache[cache_key]
 
@@ -73,7 +74,10 @@ def verify_reconstruction(
                 {"role": "system", "content": VERIFY_INSTRUCTIONS},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
             ],
-            temperature=1.0,
+            config={
+                "temperature": 1.0,
+                "thinking_config": genai_types.ThinkingConfig(thinking_level="HIGH"),
+            },
             max_retries=1,
         )
     except Exception as e:

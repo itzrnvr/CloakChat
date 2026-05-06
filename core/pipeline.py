@@ -65,15 +65,20 @@ def run_streaming(
     yield {"type": "step", "content": "Detecting sensitive info"}
     append_debug_trace("pipeline_step", {"step": "detection_start"}, request_id=request_id)
 
-    detection = detect(
-        text=text,
-        provider=detection_cfg["provider"],
-        model=detection_cfg["model"],
-        api_key=detection_cfg["api_key"],
-        system_prompt=system_prompt,
-        playbook=playbook,
-        existing_map=existing_map,
-    )
+    try:
+        detection = detect(
+            text=text,
+            provider=detection_cfg["provider"],
+            model=detection_cfg["model"],
+            api_key=detection_cfg["api_key"],
+            system_prompt=system_prompt,
+            playbook=playbook,
+            existing_map=existing_map,
+        )
+    except Exception as e:
+        logger.error("[PIPELINE] Detection failed: %s", e)
+        yield {"type": "error", "content": f"Detection failed: {type(e).__name__}: {e}"}
+        return
 
     append_debug_trace(
         "detection_result",
@@ -162,15 +167,24 @@ def run_streaming(
 
     # Phase 6: Verify reconstruction
     yield {"type": "step", "content": "Verifying reconstruction"}
-    verification = verify_reconstruction(
-        cloud_response=cloud_response,
-        deanonymized_text=reconstructed,
-        entity_map=full_map.get("forward", full_map) if isinstance(full_map, dict) else full_map,
-        provider=detection_cfg["provider"],
-        model=detection_cfg["model"],
-        api_key=detection_cfg["api_key"],
-        request_id=request_id,
-    )
+    try:
+        verification = verify_reconstruction(
+            cloud_response=cloud_response,
+            deanonymized_text=reconstructed,
+            entity_map=full_map.get("forward", full_map) if isinstance(full_map, dict) else full_map,
+            provider=detection_cfg["provider"],
+            model=detection_cfg["model"],
+            api_key=detection_cfg["api_key"],
+            request_id=request_id,
+        )
+    except Exception as e:
+        logger.warning("[PIPELINE] Verification failed: %s", e)
+        verification = {
+            "valid": False,
+            "corrected_text": reconstructed,
+            "leaks": [],
+            "notes": f"Verification unavailable: {e}",
+        }
     final_text = verification.get("corrected_text") or reconstructed
     yield {
         "type": "reconstruction_verification",

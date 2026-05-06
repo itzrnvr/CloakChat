@@ -15,7 +15,8 @@ def _get_client(provider: str, model: str, api_key: str):
     cache_key = (provider, model)
     if cache_key not in _client_cache:
         _client_cache[cache_key] = instructor.from_provider(
-            f"{provider}/{model}", api_key=api_key
+            f"{provider}/{model}",
+            api_key=api_key,
         )
     return _client_cache[cache_key]
 
@@ -58,7 +59,12 @@ def detect(
     playbook: list[PlaybookEntry],
     existing_map: dict[str, str],
 ) -> DetectionResult:
-    """Run PII detection. Returns replacements + ambiguities."""
+    """Run PII detection. Returns replacements + ambiguities.
+
+    Note: Gemma 4 26B A4B is known to crash (500 INTERNAL) when processing
+    PII-laden text via tool calling. Switching to a more reliable model
+    (e.g., gemini-2.0-flash) is recommended for production use.
+    """
     prompt = _build_prompt(system_prompt, playbook, existing_map)
     client = _get_client(provider, model, api_key)
     logger.info("[DETECT] provider=%s model=%s", provider, model)
@@ -68,7 +74,7 @@ def detect(
             {"role": "system", "content": prompt},
             {"role": "user", "content": text},
         ],
-        temperature=1.0,
+        config={"temperature": 1.0},
         max_retries=2,
     )
 

@@ -87,6 +87,8 @@ class TestLoadConfig:
         )
 
         assert config.detection["model"] == "test-model"
+        assert config.detection.get("provider_type", "openai") == "openai"
+        assert config.detection["timeout"] == 20
         assert config.cloud["model"] == "cloud-model"
         assert config.simulate_cloud is True
         assert "Detect PII" in config.system_prompt
@@ -105,6 +107,7 @@ class TestLoadConfig:
         )
 
         assert config.detection["model"] == "user-override-model"
+        assert config.detection["timeout"] == 20
         # Other fields from base still present
         assert config.detection["base_url"] == "http://localhost:11434/v1"
 
@@ -177,7 +180,8 @@ class TestSaveUserSettings:
         save_user_settings({"b": 2}, path=target)
 
         data = json.loads(target.read_text())
-        assert data == {"b": 2}
+        # Deep merge preserves existing keys
+        assert data == {"a": 1, "b": 2}
 
     def test_creates_parent_directories(self, tmp_path):
         target = tmp_path / "deep" / "nested" / "settings.json"

@@ -32,9 +32,7 @@ export interface ClarificationOption {
   resolution: string
 }
 
-export interface ClarificationRequest {
-  requestId: string
-  message: string
+export interface ClarificationItem {
   entity: string
   entityType: string
   reason?: string
@@ -43,12 +41,25 @@ export interface ClarificationRequest {
   options: ClarificationOption[]
 }
 
+export interface ClarificationSelection {
+  item: ClarificationItem
+  option: ClarificationOption
+}
+
+export interface ClarificationRequest extends ClarificationItem {
+  requestId: string
+  message: string
+  items: ClarificationItem[]
+}
+
 export interface ModelConfig {
+  provider_type: "genai" | "openai" | "other"
   base_url: string
   model_id: string
   api_key: string
   temperature: number
   max_tokens: number
+  timeout?: number
   output_mode?: "tool" | "prompted" | "native"
   tool_mode?: "native" | "text_json" | "mistral_tags" | "none"
   strict?: boolean
@@ -105,6 +116,9 @@ export interface AppState {
   sessions: SessionSummary[]
 
   addMessage: (message: Message) => void
+  startAssistantMessage: (message: Message) => void
+  appendToLastAssistantMessage: (chunk: string) => void
+  replaceLastAssistantMessage: (content: string) => void
   addTraceEvent: (event: TraceEvent) => void
   updateTraceEvent: (id: string, content: unknown) => void
   startNewRequest: (requestId: string, userMessage?: string) => void

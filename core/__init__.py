@@ -1,4 +1,4 @@
-from core.types import Replacement, EntityMap, PipelineResult
-from core.pipeline import run, run_streaming
+from core.types import Replacement, PlaybookEntry, DetectionResult, Ambiguity, VerificationResult
+from core.pipeline import run_streaming
 
-__all__ = ["Replacement", "EntityMap", "PipelineResult", "run", "run_streaming"]
+__all__ = ["Replacement", "PlaybookEntry", "DetectionResult", "Ambiguity", "VerificationResult", "run_streaming"]

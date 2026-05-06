@@ -6,11 +6,19 @@ from backend.deps import get_config
 
 router = APIRouter()
 
+_PROVIDER_MAP = {"google": "genai", "openai": "openai", "anthropic": "openai"}
+
 
 def _to_frontend(cfg: Config) -> dict:
     """Return merged config mapping internal 'model' to frontend 'model_id'."""
-    det = {**cfg.detection, "model_id": cfg.detection.get("model", "")}
-    cloud = {**cfg.cloud, "model_id": cfg.cloud.get("model", "")}
+    det_provider = cfg.detection.get("provider", "openai")
+    det_type = _PROVIDER_MAP.get(det_provider, "openai")
+    det = {"provider_type": det_type, **cfg.detection, "model_id": cfg.detection.get("model", "")}
+
+    cloud_provider = cfg.cloud.get("provider", "openai")
+    cloud_type = _PROVIDER_MAP.get(cloud_provider, "openai")
+    cloud = {"provider_type": cloud_type, **cfg.cloud, "model_id": cfg.cloud.get("model", "")}
+
     return {
         "detection": det,
         "cloud": cloud,
@@ -23,7 +31,7 @@ def _to_frontend(cfg: Config) -> dict:
 
 # Only these fields can be overridden from the UI.
 # Everything else (temperature, extra_body, output_mode, etc.) stays in config.json.
-_UI_EDITABLE_KEYS = {"base_url", "model", "api_key"}
+_UI_EDITABLE_KEYS = {"provider", "provider_type", "base_url", "model", "api_key", "timeout"}
 
 
 @router.get("/config")

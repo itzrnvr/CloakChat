@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ChevronDown, Save, RefreshCw } from "lucide-react"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
@@ -54,6 +55,10 @@ export function ConfigPanel({ config, onConfigChange }: ConfigPanelProps) {
             </div>
           </CollapsibleTrigger>
           <CollapsibleContent className="pt-4 space-y-4">
+            <ProviderSelect
+              value={localConfig.detection.provider_type}
+              onChange={(provider_type) => updateDetection({ provider_type })}
+            />
             <div className="space-y-2">
               <Label className="text-xs">Base URL</Label>
               <Input
@@ -82,6 +87,17 @@ export function ConfigPanel({ config, onConfigChange }: ConfigPanelProps) {
                 className="h-8 text-xs font-mono"
               />
             </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Timeout (seconds)</Label>
+              <Input
+                type="number"
+                min={1}
+                value={localConfig.detection.timeout ?? ""}
+                onChange={(e) => updateDetection({ timeout: e.target.value ? Number(e.target.value) : undefined })}
+                placeholder="30"
+                className="h-8 text-xs font-mono"
+              />
+            </div>
           </CollapsibleContent>
         </Collapsible>
 
@@ -94,6 +110,10 @@ export function ConfigPanel({ config, onConfigChange }: ConfigPanelProps) {
             </div>
           </CollapsibleTrigger>
           <CollapsibleContent className="pt-4 space-y-4">
+            <ProviderSelect
+              value={localConfig.cloud.provider_type}
+              onChange={(provider_type) => updateCloud({ provider_type })}
+            />
             <div className="space-y-2">
               <Label className="text-xs">Base URL</Label>
               <Input
@@ -119,6 +139,17 @@ export function ConfigPanel({ config, onConfigChange }: ConfigPanelProps) {
                 value={localConfig.cloud.api_key}
                 onChange={(e) => updateCloud({ api_key: e.target.value })}
                 placeholder="Enter API Key"
+                className="h-8 text-xs font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Timeout (seconds)</Label>
+              <Input
+                type="number"
+                min={1}
+                value={localConfig.cloud.timeout ?? ""}
+                onChange={(e) => updateCloud({ timeout: e.target.value ? Number(e.target.value) : undefined })}
+                placeholder="45"
                 className="h-8 text-xs font-mono"
               />
             </div>
@@ -179,5 +210,28 @@ export function ConfigPanel({ config, onConfigChange }: ConfigPanelProps) {
         </div>
       </div>
     </ScrollArea>
+  )
+}
+
+interface ProviderSelectProps {
+  value: "genai" | "openai" | "other"
+  onChange: (value: "genai" | "openai" | "other") => void
+}
+
+function ProviderSelect({ value, onChange }: ProviderSelectProps) {
+  return (
+    <div className="space-y-2">
+      <Label className="text-xs">Provider Type</Label>
+      <Select value={value || "openai"} onValueChange={(next) => onChange(next as "genai" | "openai" | "other")}>
+        <SelectTrigger className="h-8 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="openai">OpenAI-compatible</SelectItem>
+          <SelectItem value="genai">Google GenAI</SelectItem>
+          <SelectItem value="other">Other LiteLLM provider</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
   )
 }

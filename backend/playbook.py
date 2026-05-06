@@ -1,100 +1,54 @@
+from __future__ import annotations
+
 import json
-from dataclasses import asdict
-from datetime import datetime, timezone
+import logging
 from pathlib import Path
 
 from core.types import PlaybookEntry
 
-_DATA_DIR = Path(__file__).parent.parent / "data"
-_PLAYBOOK_FILE = _DATA_DIR / "playbook.json"
+logger = logging.getLogger("cloakchat.playbook")
+
+_PLAYBOOK_FILE = Path(__file__).parent.parent / "data" / "playbook.json"
 
 
 def load_playbook(path: Path | None = None) -> list[PlaybookEntry]:
-    """Load playbook entries from JSON file."""
-    target = path or _PLAYBOOK_FILE
-    if not target.exists():
+    """Load playbook from JSON file. Skips corrupt entries instead of losing all."""
+    file_path = path or _PLAYBOOK_FILE
+    if not file_path.exists():
         return []
-    with open(target) as f:
-        raw = json.load(f)
-    return [
-        PlaybookEntry(
-            original=item.get("original", ""),
-            entity_type=item.get("entity_type", ""),
-            action=item.get("action", "keep"),
-            resolution=item.get("resolution", ""),
-            replacement=item.get("replacement", ""),
-            note=item.get("note", ""),
-        )
-        for item in raw
-        if item.get("original")
-    ]
+    try:
+        raw = json.loads(file_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        logger.warning("[PLAYBOOK] Failed to parse playbook file, returning empty list")
+        return []
+    if not isinstance(raw, list):
+        return []
+    entries = []
+    for item in raw:
+        if not isinstance(item, dict) or not item.get("original"):
+            continue
+        try:
+            entries.append(PlaybookEntry(**item))
+        except Exception:
+            logger.warning("[PLAYBOOK] Skipping corrupt entry: %s", item)
+            continue
+    return entries
 
 
 def save_playbook_entry(entry: PlaybookEntry, path: Path | None = None) -> None:
-    """Add or update a playbook entry and persist to disk."""
-    target = path or _PLAYBOOK_FILE
-    entries = load_playbook(path)
-    filtered = [
-        existing
-        for existing in entries
-        if not (
-            existing.original == entry.original
-            and existing.entity_type == entry.entity_type
-        )
+    """Save a playbook entry, replacing any existing entry with same (original, entity_type)."""
+    file_path = path or _PLAYBOOK_FILE
+    entries = load_playbook(path=file_path)
+
+    # Deduplicate: remove existing entry with same (original, entity_type)
+    entries = [
+        e for e in entries
+        if not (e.original == entry.original and e.entity_type == entry.entity_type)
     ]
-    filtered.append(entry)
-    filtered = _dedupe_entry_replacements(filtered)
+    entries.append(entry)
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    payload = []
-    now = datetime.now(timezone.utc).isoformat()
-    for item in filtered:
-        data = asdict(item)
-        data["updatedAt"] = now
-        payload.append(data)
-
-    tmp = target.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(payload, f, indent=2)
-    tmp.replace(target)
-
-
-def _dedupe_entry_replacements(entries: list[PlaybookEntry]) -> list[PlaybookEntry]:
-    used: set[str] = set()
-    result: list[PlaybookEntry] = []
-    for entry in entries:
-        replacement = entry.replacement
-        if entry.action == "anonymize":
-            if not replacement or replacement in used:
-                replacement = _next_replacement(entry.entity_type, used)
-            used.add(replacement)
-        result.append(
-            PlaybookEntry(
-                original=entry.original,
-                entity_type=entry.entity_type,
-                action=entry.action,
-                resolution=entry.resolution,
-                replacement=replacement,
-                note=entry.note,
-            )
-        )
-    return result
-
-
-def _next_replacement(entity_type: str, used: set[str]) -> str:
-    index = 1
-    while True:
-        candidate = _placeholder(entity_type, index)
-        if candidate not in used:
-            return candidate
-        index += 1
-
-
-def _placeholder(entity_type: str, index: int) -> str:
-    if entity_type == "EMAIL":
-        return f"email_{index}@placeholder.com"
-    if entity_type == "PHONE":
-        return f"555-{index:03d}-0000"
-    if entity_type == "PERSON":
-        return f"Person_{index}"
-    return f"{entity_type or 'PII'}_{index}"
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(
+        json.dumps([e.model_dump() for e in entries], indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )

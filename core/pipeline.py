@@ -1,165 +1,29 @@
-from typing import Callable, Generator
-from core.privacy_agent import detect_pii_with_agent, verify_reconstruction_with_agent
-from core.replacement import apply_replacements
-from core.reconstruction import reconstruct
-from core.validate import validate
-from core.types import PipelineResult, PlaybookEntry
+from __future__ import annotations
 
+import logging
+from collections.abc import Generator
 
-def run(
-    text: str,
-    detection_cfg: dict,
-    cloud_llm: Callable,
-    system_prompt: str,
-    playbook_entries: list[PlaybookEntry] | None = None,
-    request_id: str | None = None,
-) -> PipelineResult:
-    """Run the full anonymization pipeline.
+from backend.debug_trace import append_debug_trace
+from core.anonymize import apply_replacements, reconstruct, validate
+from core.cloud import stream_cloud
+from core.detect import detect
+from core.fake_data import fake_replacement
+from core.types import PlaybookEntry, Replacement
+from core.verify import verify_reconstruction
 
-    Steps: detect → replace → validate → cloud inference → reconstruct
+logger = logging.getLogger("cloakchat.pipeline")
 
-    Args:
-        text: User message to process.
-        detection_cfg: Model config for PydanticAI PII detection.
-        cloud_llm: Callable for cloud inference (streaming, yields chunks).
-        system_prompt: System prompt for PII detection.
+CLOUD_SYSTEM_PROMPT = (
+    "You are a helpful chat assistant. Answer the user's actual request "
+    "directly and concisely. If the user sends a fragment, incomplete "
+    "sentence, or ambiguous statement, ask a brief clarifying question. "
+    "Do not mention privacy placeholders or anonymization."
+)
 
-    Returns:
-        PipelineResult with all intermediate and final values.
-    """
-    detection = detect_pii_with_agent(
-        text,
-        detection_cfg,
-        system_prompt,
-        playbook_entries=playbook_entries,
-        request_id=request_id,
-    )
-    if detection.ambiguities:
-        raise ValueError(f"Clarification required for {detection.ambiguities[0].original!r}")
-    anonymized, entity_map = apply_replacements(text, detection.replacements)
-    validation = validate(anonymized, entity_map)
-    cloud_response = "".join(cloud_llm([{"role": "user", "content": anonymized}]))
-    reconstructed = reconstruct(cloud_response, entity_map)
-
-    return PipelineResult(
-        original_text=text,
-        anonymized_text=anonymized,
-        cloud_response=cloud_response,
-        reconstructed=reconstructed,
-        entity_map=entity_map,
-        replacements=detection.replacements,
-        validation=validation,
-    )
-
-
-def run_streaming(
-    text: str,
-    detection_cfg: dict,
-    cloud_llm: Callable,
-    system_prompt: str,
-    history: list[dict] | None = None,
-    entity_map: dict[str, str] | None = None,
-    playbook_entries: list[PlaybookEntry] | None = None,
-    request_id: str | None = None,
-) -> Generator[dict, None, None]:
-    """Streaming version — yields SSE-ready event dicts.
-
-    Args:
-        text: Current user message (original, not anonymized).
-        detection_cfg: Model config for PydanticAI PII detection.
-        cloud_llm: LLM for cloud inference (streaming).
-        system_prompt: System prompt for detection LLM.
-        history: Prior anonymized conversation turns [{role, content}].
-        entity_map: Accumulated {original: placeholder} from prior turns.
-
-    Event types: 'detection', 'anonymized', 'validation',
-                 'cloud_chunk', 'reconstruction', 'entity_map_update', 'done'
-    """
-    # Detect only NEW entities (existing_map tells LLM what's already replaced)
-    detection = detect_pii_with_agent(
-        text,
-        detection_cfg,
-        system_prompt,
-        existing_map=entity_map,
-        playbook_entries=playbook_entries,
-        request_id=request_id,
-    )
-    if detection.reasoning:
-        yield {"type": "detection_reasoning", "content": detection.reasoning}
-
-    if detection.ambiguities:
-        ambiguity = detection.ambiguities[0]
-        yield {
-            "type": "clarification_required",
-            "entity": ambiguity.original,
-            "entity_type": ambiguity.entity_type,
-            "suggested_replacement": ambiguity.suggested_replacement,
-            "reason": ambiguity.reason,
-            "question": _build_question(ambiguity.original, ambiguity.entity_type),
-            "options": _build_options(ambiguity.entity_type),
-        }
-        return
-
-    # Apply both existing and new replacements to current message
-    all_replacements = list(detection.replacements)
-    if entity_map:
-        from core.types import Replacement as R
-        for orig, ph in entity_map.items():
-            all_replacements.append(R(original=orig, placeholder=ph, entity_type=""))
-
-    anonymized, full_entity_map = apply_replacements(text, all_replacements)
-    validation = validate(anonymized, full_entity_map)
-
-    yield {"type": "detection", "replacements": [
-        {"original": r.original, "placeholder": r.placeholder, "entity_type": r.entity_type}
-        for r in detection.replacements
-    ]}
-    yield {"type": "anonymized", "text": anonymized}
-    yield {"type": "validation", **validation}
-
-    # Build cloud messages: prior anonymized history + current anonymized message
-    cloud_messages = list(history or []) + [{"role": "user", "content": anonymized}]
-
-    cloud_response = ""
-    for chunk in cloud_llm(cloud_messages):
-        cloud_response += chunk
-        yield {"type": "cloud_chunk", "content": chunk}
-
-    # Reconstruction needs the full session map — cloud response may reference
-    # entities from prior turns that aren't in the current message's entity map.
-    from core.types import EntityMap
-    all_forward = {**(entity_map or {}), **full_entity_map.forward}
-    reconstruction_map = EntityMap(
-        forward=all_forward,
-        reverse={ph: orig for orig, ph in all_forward.items()}
-    )
-    reconstructed = reconstruct(cloud_response, reconstruction_map)
-    verification = verify_reconstruction_with_agent(
-        cloud_response=cloud_response,
-        deanonymized_text=reconstructed,
-        entity_map=all_forward,
-        cfg=detection_cfg,
-        request_id=request_id,
-    )
-    final_reconstructed = verification.get("corrected_text") or reconstructed
-    yield {
-        "type": "reconstruction",
-        "text": final_reconstructed,
-        "string_text": reconstructed,
-        "entity_map": all_forward,
-    }
-    yield {
-        "type": "reconstruction_verification",
-        "valid": verification.get("valid", False),
-        "leaks": verification.get("leaks", []),
-        "notes": verification.get("notes", ""),
-        "reasoning": verification.get("reasoning", ""),
-    }
-
-    # Emit new entity map entries so frontend can accumulate them
-    new_entries = {r.original: r.placeholder for r in detection.replacements}
-    yield {"type": "entity_map_update", "new_entries": new_entries, "anonymized_message": anonymized}
-    yield {"type": "done"}
+_DEFAULT_OPTIONS = [
+    {"id": "keep_public", "label": "Public/known, keep as-is", "action": "keep", "resolution": "public"},
+    {"id": "anonymize_private", "label": "Private, anonymize it", "action": "anonymize", "resolution": "private"},
+]
 
 
 def _build_question(original: str, entity_type: str) -> str:
@@ -168,33 +32,160 @@ def _build_question(original: str, entity_type: str) -> str:
     return f'How should CloakChat treat the ambiguous {entity_type.lower()} "{original}"?'
 
 
-def _build_options(entity_type: str) -> list[dict]:
+def _build_options(entity_type: str, model_options: list[dict] | None = None) -> list[dict]:
+    if model_options and len(model_options) >= 2:
+        valid = [opt for opt in model_options
+                 if opt.get("id") and opt.get("label") and opt.get("action") in ("keep", "anonymize") and opt.get("resolution")]
+        if len(valid) >= 2:
+            return valid[:2]
     if entity_type == "PERSON":
         return [
-            {
-                "id": "keep_public_figure",
-                "label": "Public figure, keep as-is",
-                "action": "keep",
-                "resolution": "public_figure",
-            },
-            {
-                "id": "anonymize_private_person",
-                "label": "Private person, anonymize",
-                "action": "anonymize",
-                "resolution": "private_person",
-            },
+            {"id": "keep_public_figure", "label": "Public figure, keep as-is", "action": "keep", "resolution": "public_figure"},
+            {"id": "anonymize_private_person", "label": "Private person, anonymize", "action": "anonymize", "resolution": "private_person"},
         ]
-    return [
+    return list(_DEFAULT_OPTIONS)
+
+
+def run_streaming(
+    text: str,
+    detection_cfg: dict,
+    cloud_cfg: dict,
+    system_prompt: str,
+    history: list[dict],
+    entity_map: dict[str, str] | None,
+    playbook: list[PlaybookEntry],
+    request_id: str | None = None,
+    simulate_cloud: bool = False,
+) -> Generator[dict, None, None]:
+    """Full pipeline: detect → anonymize → cloud → reconstruct → verify."""
+    entity_map = entity_map or {}
+    existing_map = entity_map.get("forward", entity_map) if isinstance(entity_map.get("forward"), dict) else entity_map
+
+    # Phase 1: Detection
+    yield {"type": "step", "content": "Detecting sensitive info"}
+    append_debug_trace("pipeline_step", {"step": "detection_start"}, request_id=request_id)
+
+    detection = detect(
+        text=text,
+        provider=detection_cfg["provider"],
+        model=detection_cfg["model"],
+        api_key=detection_cfg["api_key"],
+        system_prompt=system_prompt,
+        playbook=playbook,
+        existing_map=existing_map,
+    )
+
+    append_debug_trace(
+        "detection_result",
         {
-            "id": "keep",
-            "label": "Keep as-is",
-            "action": "keep",
-            "resolution": "keep",
+            "replacements": [r.model_dump() for r in detection.replacements],
+            "ambiguities": [a.model_dump() for a in detection.ambiguities],
         },
-        {
-            "id": "anonymize",
-            "label": "Anonymize it",
-            "action": "anonymize",
-            "resolution": "anonymize",
-        },
+        request_id=request_id,
+    )
+
+    # Phase 2: Clarification check
+    if detection.ambiguities:
+        items = []
+        for a in detection.ambiguities:
+            items.append({
+                "entity": a.original,
+                "entity_type": a.entity_type,
+                "suggested_replacement": a.suggested_replacement,
+                "reason": a.reason,
+                "question": a.question or _build_question(a.original, a.entity_type),
+                "options": _build_options(a.entity_type, a.options or None),
+            })
+        # Emit both formats: array for multi-clarification, plus flat fields for single
+        first = items[0]
+        yield {
+            "type": "clarification_required",
+            "clarifications": items,
+            # Flat fields for single-clarification backward compat
+            "entity": first["entity"],
+            "entity_type": first["entity_type"],
+            "suggested_replacement": first["suggested_replacement"],
+            "reason": first["reason"],
+            "question": first["question"],
+            "options": first["options"],
+        }
+        return
+
+    # Phase 3: Anonymize
+    replacements = [
+        Replacement(
+            original=r.original,
+            replacement=r.replacement or fake_replacement(r.entity_type, r.original, r.original),
+            entity_type=r.entity_type,
+        )
+        for r in detection.replacements
     ]
+    anonymized, full_map = apply_replacements(text, replacements, existing_map)
+
+    yield {"type": "detection", "replacements": [r.model_dump() for r in detection.replacements]}
+    yield {"type": "anonymized", "text": anonymized}
+    validation_result = validate(anonymized, full_map)
+    yield {"type": "validation", **validation_result}
+
+    append_debug_trace(
+        "anonymization",
+        {"anonymized": anonymized, "entity_map": full_map, "validation": validation_result},
+        request_id=request_id,
+    )
+
+    # Phase 4: Cloud LLM
+    yield {"type": "step", "content": "Sending anonymized prompt to the model"}
+
+    cloud_messages = [{"role": "system", "content": CLOUD_SYSTEM_PROMPT}]
+    cloud_messages.extend(history)
+    cloud_messages.append({"role": "user", "content": anonymized})
+
+    yield {"type": "cloud_prompt", "messages": cloud_messages, "history_turns": len(history)}
+
+    active_cloud = detection_cfg if simulate_cloud else cloud_cfg
+
+    cloud_response = ""
+    for chunk in stream_cloud(
+        provider=active_cloud["provider"],
+        model=active_cloud["model"],
+        api_key=active_cloud["api_key"],
+        base_url=active_cloud.get("base_url", ""),
+        messages=cloud_messages,
+    ):
+        cloud_response += chunk
+        yield {"type": "cloud_chunk", "content": chunk}
+
+    # Phase 5: Reconstruct
+    yield {"type": "step", "content": "Reconstructing final response"}
+    reconstructed = reconstruct(cloud_response, full_map)
+    yield {"type": "reconstruction", "text": reconstructed, "entity_map": full_map}
+
+    # Phase 6: Verify reconstruction
+    yield {"type": "step", "content": "Verifying reconstruction"}
+    verification = verify_reconstruction(
+        cloud_response=cloud_response,
+        deanonymized_text=reconstructed,
+        entity_map=full_map.get("forward", full_map) if isinstance(full_map, dict) else full_map,
+        provider=detection_cfg["provider"],
+        model=detection_cfg["model"],
+        api_key=detection_cfg["api_key"],
+        request_id=request_id,
+    )
+    final_text = verification.get("corrected_text") or reconstructed
+    yield {
+        "type": "reconstruction_verification",
+        "valid": verification.get("valid", False),
+        "corrected_text": verification.get("corrected_text", ""),
+        "leaks": verification.get("leaks", []),
+        "notes": verification.get("notes", ""),
+    }
+
+    # If verification corrected the text, emit updated reconstruction
+    if final_text != reconstructed:
+        yield {"type": "reconstruction", "text": final_text, "entity_map": full_map}
+
+    yield {
+        "type": "entity_map_update",
+        "new_entries": {r.original: r.replacement for r in replacements},
+    }
+    yield {"type": "done"}

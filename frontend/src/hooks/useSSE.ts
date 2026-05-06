@@ -1,62 +1,66 @@
 import { useRef } from "react"
+import { fetchEventSource } from "@microsoft/fetch-event-source"
 
 export function useSSE(onMessage: (data: unknown) => void) {
   const abortControllerRef = useRef<AbortController | null>(null)
+  const handledTerminalEventRef = useRef(false)
 
   const connect = (url: string, body: unknown) => {
     abortControllerRef.current?.abort()
     const controller = new AbortController()
     abortControllerRef.current = controller
+    handledTerminalEventRef.current = false
 
-    const fetchData = async () => {
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        })
-
+    void fetchEventSource(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+      openWhenHidden: true,
+      async onopen(response: Response) {
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`)
         }
-
-        const reader = response.body?.getReader()
-        const decoder = new TextDecoder()
-
-        if (!reader) return
-
-        while (true) {
-          const { value, done } = await reader.read()
-          if (done) break
-
-          const chunk = decoder.decode(value)
-          const lines = chunk.split('\n\n')
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6)
-              try {
-                const parsed = JSON.parse(data)
-                onMessage(parsed)
-              } catch (e) {
-                console.error('Error parsing SSE data:', e)
-              }
-            }
-          }
+        const contentType = response.headers.get("content-type") || ""
+        if (!contentType.includes("text/event-stream")) {
+          throw new Error(`Expected text/event-stream but got ${contentType}`)
         }
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') {
+      },
+      onmessage(event: { data: string }) {
+        if (!event.data) return
+        try {
+          const parsed = JSON.parse(event.data) as { type?: string }
+          if (parsed?.type === "clarification_required" || parsed?.type === "done" || parsed?.type === "error") {
+            handledTerminalEventRef.current = true
+          }
+          onMessage(parsed)
+        } catch (error) {
+          console.error("SSE parse error:", error, event.data)
+        }
+      },
+      onclose() {
+        // Clarification and done naturally end the stream. Don't surface this as an error.
+        if (handledTerminalEventRef.current || controller.signal.aborted) {
           return
         }
-        console.error('SSE Error:', error)
-        onMessage({ type: 'error', content: String(error) })
+        onMessage({ type: "error", content: "Connection closed before completion." })
+      },
+      onerror(error: unknown) {
+        if (controller.signal.aborted || handledTerminalEventRef.current) {
+          return
+        }
+        throw error
+      },
+    }).catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return
       }
-    }
-
-    fetchData()
+      console.error("SSE Error:", error)
+      onMessage({ type: "error", content: String(error) })
+    })
   }
 
   const disconnect = () => {

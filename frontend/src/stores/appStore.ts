@@ -3,18 +3,22 @@ import type { AppState, TraceGroup, AppConfig, Session, SessionSummary } from '@
 
 const DEFAULT_CONFIG: AppConfig = {
   detection: {
+    provider_type: "openai",
     base_url: "http://moonhowler.local:8000/v1",
     model_id: "Qwen3.5-2B-Q6_K.gguf",
     api_key: "",
     temperature: 0.1,
+    timeout: 30,
     max_tokens: 1024,
     output_mode: "tool"
   },
   cloud: {
+    provider_type: "openai",
     base_url: "http://moonhowler.local:8000/v1",
     model_id: "Qwen3.5-2B-Q6_K.gguf",
     api_key: "",
     temperature: 0.7,
+    timeout: 45,
     max_tokens: 1024
   },
   testing: {
@@ -40,6 +44,47 @@ export const useAppStore = create<AppState>((set) => ({
   addMessage: (message) => set((state) => ({
     messages: [...state.messages, message]
   })),
+
+  startAssistantMessage: (message) => set((state) => {
+    const last = state.messages[state.messages.length - 1]
+    if (last?.role === "assistant") {
+      return {
+        messages: [
+          ...state.messages.slice(0, -1),
+          { ...last, ...message, role: "assistant" },
+        ],
+      }
+    }
+    return {
+      messages: [...state.messages, message],
+    }
+  }),
+
+  appendToLastAssistantMessage: (chunk) => set((state) => {
+    const last = state.messages[state.messages.length - 1]
+    if (last?.role !== "assistant") {
+      return state
+    }
+    return {
+      messages: [
+        ...state.messages.slice(0, -1),
+        { ...last, content: last.content + chunk },
+      ],
+    }
+  }),
+
+  replaceLastAssistantMessage: (content) => set((state) => {
+    const last = state.messages[state.messages.length - 1]
+    if (last?.role !== "assistant") {
+      return state
+    }
+    return {
+      messages: [
+        ...state.messages.slice(0, -1),
+        { ...last, content },
+      ],
+    }
+  }),
 
   addTraceEvent: (event) => set((state) => {
     const newEvent = {

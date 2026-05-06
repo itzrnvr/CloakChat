@@ -1,11 +1,14 @@
 import { useRef } from "react"
 import { useAppStore } from "@/stores/appStore"
 import { useSSE } from "./useSSE"
-import type { ClarificationOption } from "@/types"
+import type { ClarificationItem, ClarificationSelection } from "@/types"
 
 export function useChat() {
   const {
     addMessage,
+    startAssistantMessage,
+    appendToLastAssistantMessage,
+    replaceLastAssistantMessage,
     addTraceEvent,
     setStatus,
     status,
@@ -26,6 +29,7 @@ export function useChat() {
   const anonymizedMsgRef = useRef<string>("")
   const newEntriesRef = useRef<Record<string, string>>({})
   const anonymizedResponseRef = useRef<string>("")
+  const assistantMessageStartedRef = useRef<boolean>(false)
 
   const { connect, disconnect } = useSSE((data: unknown) => {
     const event = data as Record<string, unknown>
@@ -33,12 +37,20 @@ export function useChat() {
     switch (event.type) {
       case 'detection':
       case 'detection_reasoning':
+      case 'step':
         addTraceEvent({
           id: crypto.randomUUID(),
           type: event.type as string,
           content: event,
           timestamp: new Date().toISOString()
         })
+        if (event.type === 'step') {
+          setStatus('processing', event.content as string)
+        }
+        break
+
+      case 'heartbeat':
+        setStatus('processing', event.content as string)
         break
 
       case 'anonymized':
@@ -52,9 +64,10 @@ export function useChat() {
         break
 
       case 'validation':
+      case 'cloud_prompt':
         addTraceEvent({
           id: crypto.randomUUID(),
-          type: 'validation',
+          type: event.type as string,
           content: event,
           timestamp: new Date().toISOString()
         })
@@ -62,6 +75,16 @@ export function useChat() {
 
       case 'cloud_chunk':
         anonymizedResponseRef.current += event.content as string
+        if (!assistantMessageStartedRef.current) {
+          startAssistantMessage({
+            role: 'assistant',
+            content: event.content as string,
+            timestamp: new Date().toISOString()
+          })
+          assistantMessageStartedRef.current = true
+        } else {
+          appendToLastAssistantMessage(event.content as string)
+        }
         appendCloudStreamingContent(event.content as string)
         addTraceEvent({
           id: crypto.randomUUID(),
@@ -71,12 +94,26 @@ export function useChat() {
         })
         break
 
-      case 'reconstruction':
-        addMessage({
-          role: 'assistant',
-          content: event.text as string,
+      case 'cloud_reasoning_chunk':
+        setStatus('processing', 'Model is reasoning...')
+        addTraceEvent({
+          id: crypto.randomUUID(),
+          type: 'cloud_reasoning_chunk',
+          content: event,
           timestamp: new Date().toISOString()
         })
+        break
+
+      case 'reconstruction':
+        if (assistantMessageStartedRef.current) {
+          replaceLastAssistantMessage(event.text as string)
+        } else {
+          addMessage({
+            role: 'assistant',
+            content: event.text as string,
+            timestamp: new Date().toISOString()
+          })
+        }
         addTraceEvent({
           id: crypto.randomUUID(),
           type: 'reconstruction',
@@ -101,23 +138,38 @@ export function useChat() {
       case 'clarification_required': {
         const store = useAppStore.getState()
         const currentGroup = store.traceGroups.find(g => g.id === store.currentRequestId)
+        const rawItems = Array.isArray(event.clarifications)
+          ? event.clarifications as Record<string, unknown>[]
+          : [event]
+        const items: ClarificationItem[] = rawItems.map((item) => ({
+          entity: item.entity as string,
+          entityType: item.entity_type as string,
+          reason: item.reason as string | undefined,
+          question: item.question as string,
+          suggestedReplacement: item.suggested_replacement as string | undefined,
+          options: (item.options as ClarificationItem["options"]) ?? [],
+        }))
+        const first = items[0]
         setPendingClarification({
           requestId: store.currentRequestId ?? crypto.randomUUID(),
           message: currentGroup?.userMessage || "",
-          entity: event.entity as string,
-          entityType: event.entity_type as string,
-          reason: event.reason as string | undefined,
-          question: event.question as string,
-          suggestedReplacement: event.suggested_replacement as string | undefined,
-          options: (event.options as ClarificationOption[]) ?? [],
+          ...first,
+          items,
         })
-        setStatus('awaiting_clarification', `Waiting for clarification about ${event.entity as string}`)
+        setStatus(
+          'awaiting_clarification',
+          items.length > 1
+            ? `Waiting for ${items.length} clarifications`
+            : `Waiting for clarification about ${first.entity}`
+        )
         addTraceEvent({
           id: crypto.randomUUID(),
           type: 'clarification_required',
           content: event,
           timestamp: new Date().toISOString()
         })
+        // Clarification is a terminal event for this stream; stop SSE cleanly.
+        disconnect()
         break
       }
 
@@ -141,6 +193,7 @@ export function useChat() {
         anonymizedMsgRef.current = ""
         anonymizedResponseRef.current = ""
         newEntriesRef.current = {}
+        assistantMessageStartedRef.current = false
 
         clearPendingClarification()
         setStatus('ready')
@@ -199,6 +252,7 @@ export function useChat() {
         break
 
       case 'error':
+        assistantMessageStartedRef.current = false
         setStatus('error', event.content as string)
         addTraceEvent({
           id: crypto.randomUUID(),
@@ -221,6 +275,7 @@ export function useChat() {
     const requestId = crypto.randomUUID()
     startNewRequest(requestId, content)
     setCloudStreamingContent("")
+    assistantMessageStartedRef.current = false
 
     addMessage({
       role: 'user',
@@ -237,13 +292,13 @@ export function useChat() {
     })
   }
 
-  const submitClarification = (option: ClarificationOption, remember: boolean) => {
+  const submitClarification = (answers: ClarificationSelection[], remember: boolean) => {
     const store = useAppStore.getState()
     const clarification = store.pendingClarification
     if (!clarification) return
 
     clearPendingClarification()
-    setStatus('processing', `Applying clarification for ${clarification.entity}`)
+    setStatus('processing', answers.length > 1 ? "Applying clarifications" : `Applying clarification for ${answers[0]?.item.entity}`)
     setCloudStreamingContent("")
 
     connect('/api/chat/clarify', {
@@ -251,14 +306,14 @@ export function useChat() {
       message: clarification.message,
       history: store.anonymizedHistory,
       entity_map: store.entityMap,
-      clarification: {
-        original: clarification.entity,
-        entity_type: clarification.entityType,
+      clarifications: answers.map(({ item, option }) => ({
+        original: item.entity,
+        entity_type: item.entityType,
         action: option.action,
         resolution: option.resolution,
-        replacement: clarification.suggestedReplacement || "",
+        replacement: item.suggestedReplacement || "",
         remember,
-      },
+      })),
     })
   }
 
@@ -270,6 +325,7 @@ export function useChat() {
     anonymizedMsgRef.current = ""
     anonymizedResponseRef.current = ""
     newEntriesRef.current = {}
+    assistantMessageStartedRef.current = false
     setCloudStreamingContent("")
     clearPendingClarification()
   }

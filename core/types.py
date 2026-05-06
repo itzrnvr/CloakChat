@@ -1,36 +1,41 @@
-from dataclasses import dataclass
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
 
 
-@dataclass(frozen=True)
-class Replacement:
-    original: str       # Original PII text (e.g. "John Smith")
-    placeholder: str    # Replacement token (e.g. "Person_1")
-    entity_type: str    # Entity category (e.g. "PERSON", "EMAIL")
+class Replacement(BaseModel):
+    original: str = Field(description="Exact substring from user input")
+    replacement: str = Field(description="Realistic fictional substitute")
+    entity_type: str = Field(
+        description=(
+            "PERSON, EMAIL, PHONE, ADDRESS, ORGANIZATION, LOCATION, DATE, "
+            "MONEY, SSN, CREDIT_CARD, ID_NUMBER, USERNAME, URL, AGE, "
+            "JOB_TITLE, MEDICAL, EDUCATION, or PII"
+        )
+    )
 
 
-@dataclass(frozen=True)
-class EntityMap:
-    forward: dict[str, str]  # original -> placeholder
-    reverse: dict[str, str]  # placeholder -> original
+class Ambiguity(BaseModel):
+    original: str = Field(description="Exact substring from user input")
+    entity_type: str = Field(description="Likely entity type")
+    suggested_replacement: str = Field(description="Natural fictional substitute if user chooses anonymization")
+    reason: str = Field(description="Short reason this needs clarification")
+    question: str = Field(default="", description="User-facing clarification question")
+    options: list[dict] = Field(default_factory=list, description="Two choices: keep or anonymize")
 
 
-@dataclass(frozen=True)
-class Ambiguity:
-    original: str
-    entity_type: str
-    suggested_replacement: str
-    reason: str
+class DetectionResult(BaseModel):
+    replacements: list[Replacement] = Field(
+        default_factory=list,
+        description="Private entities to anonymize immediately",
+    )
+    ambiguities: list[Ambiguity] = Field(
+        default_factory=list,
+        description="Entities requiring user clarification",
+    )
 
 
-@dataclass
-class DetectionResult:
-    replacements: list[Replacement]
-    ambiguities: list[Ambiguity]
-    reasoning: str = ""
-
-
-@dataclass(frozen=True)
-class PlaybookEntry:
+class PlaybookEntry(BaseModel):
     original: str
     entity_type: str
     action: str  # "keep" | "anonymize"
@@ -39,12 +44,11 @@ class PlaybookEntry:
     note: str = ""
 
 
-@dataclass
-class PipelineResult:
-    original_text: str
-    anonymized_text: str
-    cloud_response: str
-    reconstructed: str
-    entity_map: EntityMap
-    replacements: list[Replacement]
-    validation: dict
+class VerificationResult(BaseModel):
+    valid: bool = Field(description="True when deanonymized_text has no placeholder leaks")
+    corrected_text: str = Field(description="Corrected text with placeholders replaced by originals")
+    leaks: list[str] = Field(
+        default_factory=list,
+        description="Placeholder leaks or suspicious anonymized values still visible",
+    )
+    notes: str = Field(default="", description="Short verification notes")

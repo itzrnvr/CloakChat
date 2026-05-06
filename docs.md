@@ -29,12 +29,16 @@ Single source of truth for all runtime settings.
 
 | Field | Type | Description |
 |---|---|---|
-| `detection.base_url` | string | OpenAI-compatible endpoint for the detection model |
-| `detection.model` | string | Model name for the OpenAI-compatible endpoint |
+| `detection.provider_type` | string | `openai`, `genai`, or `other` |
+| `detection.base_url` | string | OpenAI-compatible endpoint for the detection model; leave empty for `genai` |
+| `detection.model` | string | Model name for the selected provider |
 | `detection.api_key` | string | API key (`"local"` for llama.cpp servers) |
 | `detection.temperature` | float | Sampling temperature (low = more deterministic) |
+| `detection.timeout` | int | Request timeout in seconds for the detection provider |
 | `detection.max_tokens` | int | Max tokens for detection response |
 | `detection.output_mode` | string | `"tool"` / `"prompted"` / `"native"` |
+| `detection.verify_reconstruction` | bool | Run the extra local LLM verifier after reconstruction |
+| `detection.verification_timeout` | int | Short timeout for the verifier call |
 | `cloud.*` | — | Same fields as detection, for the cloud inference model |
 | `server.host` | string | Host to bind the backend server |
 | `server.port` | int | Port for the backend server |
@@ -42,6 +46,18 @@ Single source of truth for all runtime settings.
 | `system_prompt` | string | System prompt sent to the detection LLM |
 
 **Extra provider parameters** — any key in `detection` or `cloud` that is not listed above is forwarded to the OpenAI-compatible request. This allows using provider-specific options (e.g. `extra_body`, `reasoning_effort`, `top_p`, `frequency_penalty`) without waiting for explicit support.
+
+Provider types:
+
+| Value | Description |
+|---|---|
+| `openai` | OpenAI-compatible endpoint through LiteLLM. |
+| `genai` | Google GenAI SDK. Use the Google API key and leave `base_url` empty. |
+| `other` | LiteLLM native provider routing; include the provider in the model id. |
+
+For `genai`, CloakChat streams through the official Google GenAI chat API. For Gemma models, any system instruction is merged into the first user turn because Gemma does not support a separate `system` role.
+
+For Google GenAI, prefer a fast model like `gemini-2.5-flash-lite` for `detection`. Detection uses structured output, so it should be optimized for latency; the larger creative/chat model can still be used under `cloud`.
 
 ```json
 {
@@ -54,7 +70,7 @@ Single source of truth for all runtime settings.
 }
 ```
 
-Known keys (absorbed by CloakChat, not forwarded): `model`, `base_url`, `api_key`, `temperature`, `max_tokens`, `output_mode`, `tool_mode`, `strict`. Everything else is forwarded as model settings.
+Known keys (absorbed by CloakChat, not forwarded): `model`, `base_url`, `api_key`, `provider_type`, `temperature`, `timeout`, `max_tokens`, `verify_reconstruction`, `verification_timeout`, `output_mode`, `tool_mode`, `strict`. Everything else is forwarded as model settings.
 
 **Env var overrides:** `DETECTION_API_KEY`, `CLOUD_API_KEY`, `DETECTION_BASE_URL`, `CLOUD_BASE_URL`
 

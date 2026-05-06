@@ -111,10 +111,17 @@ function ClarificationStep({ group }: { group: TraceGroup }) {
 }
 
 function CloudStep({ group, cloudContent, isActive }: { group: TraceGroup; cloudContent: string; isActive: boolean }) {
-  const hasCloud = group.events.some(e => e.type === 'cloud_chunk') || (isActive)
-  if (!hasCloud && !cloudContent) return null
+  const cloudPrompt = group.events.find(e => e.type === 'cloud_prompt')
+  const cloudReasoning = group.events
+    .filter(e => e.type === 'cloud_reasoning_chunk')
+    .map((e) => ((e.content as Record<string, unknown>)?.content as string) || "")
+    .join("")
+  const hasCloud = group.events.some(e => e.type === 'cloud_chunk' || e.type === 'cloud_reasoning_chunk') || Boolean(cloudPrompt) || (isActive)
+  if (!hasCloud && !cloudContent && !cloudReasoning) return null
   const entityMap = getEntityMap(group)
   const placeholders = Object.values(entityMap)
+  const promptContent = cloudPrompt?.content as Record<string, unknown> | undefined
+  const messages = (promptContent?.messages as Array<{role: string; content: string}> | undefined) ?? []
 
   return (
     <StepCard label="Cloud" color="purple">
@@ -131,6 +138,40 @@ function CloudStep({ group, cloudContent, isActive }: { group: TraceGroup; cloud
           </span>
         )}
       </div>
+      {messages.length > 0 && (
+        <div className="mb-2 rounded bg-[var(--color-base-100)] dark:bg-[var(--color-base-800)] p-2">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="font-mono text-[10px] font-bold uppercase text-[var(--color-purple-400)]">
+              Sent to cloud
+            </span>
+            <span className="text-[10px] text-[var(--color-base-400)]">
+              {messages.length} messages
+            </span>
+          </div>
+          <div className="max-h-44 overflow-y-auto space-y-2">
+            {messages.map((message, index) => (
+              <div key={index} className="rounded border border-[var(--color-base-200)] dark:border-[var(--color-base-700)] bg-white dark:bg-[var(--color-base-950)] p-2">
+                <div className="mb-1 font-mono text-[10px] uppercase text-[var(--color-base-400)]">
+                  {message.role}
+                </div>
+                <pre className="whitespace-pre-wrap font-mono text-xs text-[var(--color-base-700)] dark:text-[var(--color-base-300)]">
+                  <HighlightedText text={message.content || ""} terms={placeholders} variant="placeholder" />
+                </pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {cloudReasoning && (
+        <div className="mb-2 rounded bg-[var(--color-base-100)] dark:bg-[var(--color-base-800)] p-2">
+          <div className="mb-1 font-mono text-[10px] font-bold uppercase text-[var(--color-orange-400)]">
+            Model reasoning
+          </div>
+          <div className="max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-[var(--color-base-600)] dark:text-[var(--color-base-300)]">
+            {cloudReasoning}
+          </div>
+        </div>
+      )}
       <div className="max-h-40 overflow-y-auto rounded bg-white dark:bg-[var(--color-base-950)] p-2 text-xs text-[var(--color-base-700)] dark:text-[var(--color-base-300)] whitespace-pre-wrap">
         {cloudContent ? (
           <HighlightedText text={cloudContent} terms={placeholders} variant="placeholder" />

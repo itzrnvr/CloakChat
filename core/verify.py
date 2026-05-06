@@ -3,24 +3,15 @@ from __future__ import annotations
 import json
 import logging
 
-import instructor
+from google import genai
+from google.genai import types as genai_types
 
 from backend.debug_trace import append_debug_trace
 from core.types import VerificationResult
 
 logger = logging.getLogger("cloakchat.verify")
 
-_client_cache: dict[tuple[str, str], instructor.Instructor] = {}
-
-
-def _get_client(provider: str, model: str, api_key: str):
-    cache_key = (provider, model)
-    if cache_key not in _client_cache:
-        _client_cache[cache_key] = instructor.from_provider(
-            f"{provider}/{model}",
-            api_key=api_key,
-        )
-    return _client_cache[cache_key]
+_client_cache: dict[str, genai.Client] = {}
 
 VERIFY_INSTRUCTIONS = """You are CloakChat's local reconstruction verifier.
 
@@ -36,6 +27,27 @@ values. Do not add new facts or rewrite style. Only repair deanonymization issue
 """
 
 
+def _get_client(api_key: str) -> genai.Client:
+    if api_key not in _client_cache:
+        _client_cache[api_key] = genai.Client(api_key=api_key)
+    return _client_cache[api_key]
+
+
+def _strip_additional_props(schema: dict) -> dict:
+    cleaned = {k: v for k, v in schema.items() if k != "additionalProperties"}
+    if "properties" in cleaned and isinstance(cleaned["properties"], dict):
+        cleaned["properties"] = {
+            k: _strip_additional_props(v) for k, v in cleaned["properties"].items()
+        }
+    if "items" in cleaned and isinstance(cleaned["items"], dict):
+        cleaned["items"] = _strip_additional_props(cleaned["items"])
+    if "$defs" in cleaned:
+        del cleaned["$defs"]
+    if "allOf" in cleaned:
+        del cleaned["allOf"]
+    return cleaned
+
+
 def verify_reconstruction(
     cloud_response: str,
     deanonymized_text: str,
@@ -45,7 +57,7 @@ def verify_reconstruction(
     api_key: str,
     request_id: str | None = None,
 ) -> dict:
-    """Verify reconstruction quality. Returns verification dict."""
+    """Verify reconstruction quality via native Gemini structured output."""
     if not entity_map:
         return {
             "valid": True,
@@ -54,7 +66,7 @@ def verify_reconstruction(
             "notes": "No entity map entries to verify.",
         }
 
-    client = _get_client(provider, model, api_key)
+    client = _get_client(api_key)
     payload = {
         "cloud_response": cloud_response,
         "deanonymized_text": deanonymized_text,
@@ -67,19 +79,24 @@ def verify_reconstruction(
         request_id=request_id,
     )
 
+    raw_schema = VerificationResult.model_json_schema()
+    cleaned_schema = _strip_additional_props(raw_schema)
+    schema = genai_types.Schema(**cleaned_schema)
+
     try:
-        result = client.create(
-            response_model=VerificationResult,
-            messages=[
-                {"role": "system", "content": VERIFY_INSTRUCTIONS},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
-            ],
-            config={
-                "temperature": 1.0,
-                "thinking_config": genai_types.ThinkingConfig(thinking_level="HIGH"),
-            },
-            max_retries=1,
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt_template(payload),
+            config=genai_types.GenerateContentConfig(
+                temperature=1.0,
+                response_mime_type="application/json",
+                response_schema=schema,
+            ),
         )
+        raw = response.text.strip()
+        logger.debug("[VERIFY] Raw response: %s", raw[:200])
+        data = json.loads(raw)
+        result = VerificationResult.model_validate(data).model_dump()
     except Exception as e:
         logger.warning("[VERIFY] Verification failed: %s", e)
         append_debug_trace(
@@ -94,14 +111,17 @@ def verify_reconstruction(
             "notes": f"Verifier unavailable: {type(e).__name__}: {e}",
         }
 
-    output = result.model_dump()
-    output["corrected_text"] = output.get("corrected_text") or deanonymized_text
-    output["leaks"] = [str(item) for item in output.get("leaks", []) if str(item).strip()]
-    output["notes"] = output.get("notes", "") or ""
+    result["corrected_text"] = result.get("corrected_text") or deanonymized_text
+    result["leaks"] = [str(item) for item in result.get("leaks", []) if str(item).strip()]
+    result["notes"] = result.get("notes", "") or ""
 
     append_debug_trace(
         "reconstruction_verifier_response",
-        {"output": output},
+        {"output": result},
         request_id=request_id,
     )
-    return output
+    return result
+
+
+def prompt_template(payload: dict) -> str:
+    return VERIFY_INSTRUCTIONS + "\n\nData:\n" + json.dumps(payload, ensure_ascii=False, indent=2)

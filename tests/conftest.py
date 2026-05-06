@@ -69,13 +69,3 @@ def model(detection_cfg) -> str:
 @pytest.fixture
 def provider(detection_cfg) -> str:
     return detection_cfg.get("provider", "google")
-
-
-@pytest.fixture
-def skip_if_gemma4(model):
-    """Skip test if using Gemma 4 (crashes with tool calling for PII text)."""
-    if model.lower() in _GEMMA4_MODELS or "gemma-4" in model.lower():
-        pytest.skip(
-            "Gemma 4 26B A4B crashes (500 INTERNAL) with tool calling for PII text. "
-            "Switch to gemini-2.0-flash for reliable detection."
-        )

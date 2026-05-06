@@ -1,12 +1,7 @@
-"""Integration tests for core/detect.py — real Google GenAI calls via Instructor.
+"""Integration tests for core/detect.py — real Google GenAI calls.
 
 These tests call the actual model and validate structured output.
 Skip them with: pytest -m "not integration"
-
-KNOWN ISSUE: Gemma 4 26B A4B crashes (500 INTERNAL) with tool calling when
-processing PII-laden text. The `skip_if_gemma4` fixture auto-skips PII tests
-for that model. Verification and benign-text tests still pass.
-Switch to gemini-2.0-flash for production PII detection.
 """
 
 import pytest
@@ -25,10 +20,6 @@ def _dummy_map() -> dict[str, str]:
     return {}
 
 
-# ---------------------------------------------------------------------------
-# Benign text (always passes, even with Gemma 4)
-# ---------------------------------------------------------------------------
-
 def test_benign_text_returns_empty(provider, model, api_key, system_prompt):
     """Text with no PII should return empty replacements and ambiguities."""
     result = detect(
@@ -41,11 +32,7 @@ def test_benign_text_returns_empty(provider, model, api_key, system_prompt):
     assert len(result.ambiguities) == 0, f"Unexpected ambiguities: {result.ambiguities}"
 
 
-# ---------------------------------------------------------------------------
-# PII detection (skipped for Gemma 4 due to model bug)
-# ---------------------------------------------------------------------------
-
-def test_person_name_triggers_ambiguity_not_replacement(provider, model, api_key, system_prompt, skip_if_gemma4):
+def test_person_name_triggers_ambiguity_not_replacement(provider, model, api_key, system_prompt):
     """PERSON names go to ambiguities so the user can make the privacy choice."""
     result = detect(
         text="amitabh weds mandy",
@@ -64,7 +51,7 @@ def test_person_name_triggers_ambiguity_not_replacement(provider, model, api_key
         assert a.original and a.entity_type == "PERSON" and a.suggested_replacement and a.reason
 
 
-def test_email_auto_replaced(provider, model, api_key, system_prompt, skip_if_gemma4):
+def test_email_auto_replaced(provider, model, api_key, system_prompt):
     result = detect(
         text="Contact me at johndoe@example.com for details",
         provider=provider, model=model, api_key=api_key,
@@ -77,7 +64,7 @@ def test_email_auto_replaced(provider, model, api_key, system_prompt, skip_if_ge
         assert "REDACTED" not in r.replacement
 
 
-def test_phone_number_auto_replaced(provider, model, api_key, system_prompt, skip_if_gemma4):
+def test_phone_number_auto_replaced(provider, model, api_key, system_prompt):
     result = detect(
         text="Call me at 555-123-4567 tomorrow",
         provider=provider, model=model, api_key=api_key,
@@ -87,7 +74,7 @@ def test_phone_number_auto_replaced(provider, model, api_key, system_prompt, ski
     assert len(phone) > 0
 
 
-def test_mixed_pii_detection(provider, model, api_key, system_prompt, skip_if_gemma4):
+def test_mixed_pii_detection(provider, model, api_key, system_prompt):
     result = detect(
         text="Hi I'm Sarah from Acme Corp, email sarah@acme.com, call 555-123-4567",
         provider=provider, model=model, api_key=api_key,
@@ -100,7 +87,7 @@ def test_mixed_pii_detection(provider, model, api_key, system_prompt, skip_if_ge
     assert len(entity_types) >= 3
 
 
-def test_detection_result_fields_are_well_formed(provider, model, api_key, system_prompt, skip_if_gemma4):
+def test_detection_result_fields_are_well_formed(provider, model, api_key, system_prompt):
     result = detect(
         text="Dr. Patel at 742 Evergreen Terrace, SSN 123-45-6789",
         provider=provider, model=model, api_key=api_key,
@@ -120,7 +107,7 @@ def test_detection_result_fields_are_well_formed(provider, model, api_key, syste
         assert isinstance(a.options, list)
 
 
-def test_person_names_never_in_replacements(provider, model, api_key, system_prompt, skip_if_gemma4):
+def test_person_names_never_in_replacements(provider, model, api_key, system_prompt):
     result = detect(
         text="Raj met Priya at the cafe",
         provider=provider, model=model, api_key=api_key,
@@ -130,7 +117,7 @@ def test_person_names_never_in_replacements(provider, model, api_key, system_pro
     assert len(person_replacements) == 0
 
 
-def test_playbook_keep_rule_respected(provider, model, api_key, system_prompt, skip_if_gemma4):
+def test_playbook_keep_rule_respected(provider, model, api_key, system_prompt):
     result = detect(
         text="Obama gave a speech today",
         provider=provider, model=model, api_key=api_key,
@@ -142,7 +129,7 @@ def test_playbook_keep_rule_respected(provider, model, api_key, system_prompt, s
     assert len(obama) == 0
 
 
-def test_playbook_anonymize_rule_respected(provider, model, api_key, system_prompt, skip_if_gemma4):
+def test_playbook_anonymize_rule_respected(provider, model, api_key, system_prompt):
     result = detect(
         text="Tell Alice about the meeting",
         provider=provider, model=model, api_key=api_key,

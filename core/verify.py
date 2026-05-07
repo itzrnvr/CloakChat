@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from google import genai
 from google.genai import types as genai_types
@@ -10,6 +11,23 @@ from backend.debug_trace import append_debug_trace
 from core.types import VerificationResult
 
 logger = logging.getLogger("cloakchat.verify")
+
+
+def _extract_json(raw: str) -> dict:
+    """Robust JSON extraction — handles markdown fences and trailing text."""
+    text = re.sub(r"```(?:json)?\s*\n?", "", raw)
+    text = text.replace("```", "").strip()
+    for start_char, end_char in (("{", "}"), ("[", "]")):
+        start = text.find(start_char)
+        if start == -1:
+            continue
+        decoder = json.JSONDecoder()
+        try:
+            obj, _ = decoder.raw_decode(text, start)
+            return obj
+        except json.JSONDecodeError:
+            continue
+    raise json.JSONDecodeError(f"No JSON object found in: {raw[:200]}", raw, 0)
 
 _client_cache: dict[str, genai.Client] = {}
 
@@ -95,7 +113,7 @@ def verify_reconstruction(
         )
         raw = response.text.strip()
         logger.debug("[VERIFY] Raw response: %s", raw[:200])
-        data = json.loads(raw)
+        data = _extract_json(raw)
         result = VerificationResult.model_validate(data).model_dump()
     except Exception as e:
         logger.warning("[VERIFY] Verification failed: %s", e)

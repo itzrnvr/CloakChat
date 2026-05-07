@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from google import genai
@@ -11,6 +12,24 @@ from pydantic import BaseModel
 from core.types import DetectionResult, PlaybookEntry
 
 logger = logging.getLogger("cloakchat.detect")
+
+
+def _extract_json(raw: str) -> dict[str, Any]:
+    """Robust JSON extraction — handles markdown fences and trailing text."""
+    text = re.sub(r"```(?:json)?\s*\n?", "", raw)
+    text = text.replace("```", "").strip()
+    # Find the first JSON bracket
+    for start_char, end_char in (("{", "}"), ("[", "]")):
+        start = text.find(start_char)
+        if start == -1:
+            continue
+        decoder = json.JSONDecoder()
+        try:
+            obj, _ = decoder.raw_decode(text, start)
+            return obj
+        except json.JSONDecodeError:
+            continue
+    raise json.JSONDecodeError(f"No JSON object found in: {raw[:200]}", raw, 0)
 
 _client_cache: dict[str, genai.Client] = {}
 
@@ -140,7 +159,8 @@ def detect(
 
     raw = response.text.strip()
     logger.debug("[DETECT] Raw response: %s", raw[:200])
-    data = json.loads(raw)
+    data = _extract_json(raw)
+    logger.debug("[DETECT] Parsed JSON: %s", json.dumps(data)[:200])
     return DetectionResult.model_validate(data)
 
 

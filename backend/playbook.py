@@ -10,6 +10,8 @@ logger = logging.getLogger("cloakchat.playbook")
 
 _PLAYBOOK_FILE = Path(__file__).parent.parent / "data" / "playbook.json"
 
+MAX_PLAYBOOK_ENTRIES = 100
+
 
 def load_playbook(path: Path | None = None) -> list[PlaybookEntry]:
     """Load playbook from JSON file. Skips corrupt entries instead of losing all."""
@@ -46,6 +48,9 @@ def save_playbook_entry(entry: PlaybookEntry, path: Path | None = None) -> None:
         if not (e.original == entry.original and e.entity_type == entry.entity_type)
     ]
     entries.append(entry)
+
+    if len(entries) > MAX_PLAYBOOK_ENTRIES:
+        entries = entries[-MAX_PLAYBOOK_ENTRIES:]
 
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(

@@ -23,6 +23,7 @@ class Config(BaseModel):
     cloud: dict = Field(default_factory=dict)
     server: dict = Field(default_factory=dict)
     simulate_cloud: bool = False
+    max_playbook_entries: int = 100
     system_prompt: str = ""
     user_context: str = ""
 

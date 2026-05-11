@@ -22,7 +22,7 @@ def _dummy_map() -> dict[str, str]:
 
 def test_benign_text_returns_empty(provider, model, api_key, system_prompt):
     """Text with no PII should return empty replacements and ambiguities."""
-    result = detect(
+    result, _ = detect(
         text="The weather is nice today. I had a great lunch.",
         provider=provider, model=model, api_key=api_key,
         system_prompt=system_prompt,
@@ -34,7 +34,7 @@ def test_benign_text_returns_empty(provider, model, api_key, system_prompt):
 
 def test_person_name_triggers_ambiguity_not_replacement(provider, model, api_key, system_prompt):
     """PERSON names go to ambiguities so the user can make the privacy choice."""
-    result = detect(
+    result, _ = detect(
         text="amitabh weds mandy",
         provider=provider, model=model, api_key=api_key,
         system_prompt=system_prompt,
@@ -52,7 +52,7 @@ def test_person_name_triggers_ambiguity_not_replacement(provider, model, api_key
 
 
 def test_email_auto_replaced(provider, model, api_key, system_prompt):
-    result = detect(
+    result, _ = detect(
         text="Contact me at johndoe@example.com for details",
         provider=provider, model=model, api_key=api_key,
         system_prompt=system_prompt, playbook=_dummy_playbook(), existing_map=_dummy_map(),
@@ -65,7 +65,7 @@ def test_email_auto_replaced(provider, model, api_key, system_prompt):
 
 
 def test_phone_number_auto_replaced(provider, model, api_key, system_prompt):
-    result = detect(
+    result, _ = detect(
         text="Call me at 555-123-4567 tomorrow",
         provider=provider, model=model, api_key=api_key,
         system_prompt=system_prompt, playbook=_dummy_playbook(), existing_map=_dummy_map(),
@@ -75,7 +75,7 @@ def test_phone_number_auto_replaced(provider, model, api_key, system_prompt):
 
 
 def test_mixed_pii_detection(provider, model, api_key, system_prompt):
-    result = detect(
+    result, _ = detect(
         text="Hi I'm Sarah from Acme Corp, email sarah@acme.com, call 555-123-4567",
         provider=provider, model=model, api_key=api_key,
         system_prompt=system_prompt, playbook=_dummy_playbook(), existing_map=_dummy_map(),
@@ -88,7 +88,7 @@ def test_mixed_pii_detection(provider, model, api_key, system_prompt):
 
 
 def test_detection_result_fields_are_well_formed(provider, model, api_key, system_prompt):
-    result = detect(
+    result, _ = detect(
         text="Dr. Patel at 742 Evergreen Terrace, SSN 123-45-6789",
         provider=provider, model=model, api_key=api_key,
         system_prompt=system_prompt, playbook=_dummy_playbook(), existing_map=_dummy_map(),
@@ -108,7 +108,7 @@ def test_detection_result_fields_are_well_formed(provider, model, api_key, syste
 
 
 def test_person_names_never_in_replacements(provider, model, api_key, system_prompt):
-    result = detect(
+    result, _ = detect(
         text="Raj met Priya at the cafe",
         provider=provider, model=model, api_key=api_key,
         system_prompt=system_prompt, playbook=_dummy_playbook(), existing_map=_dummy_map(),
@@ -118,7 +118,7 @@ def test_person_names_never_in_replacements(provider, model, api_key, system_pro
 
 
 def test_playbook_keep_rule_respected(provider, model, api_key, system_prompt):
-    result = detect(
+    result, _ = detect(
         text="Obama gave a speech today",
         provider=provider, model=model, api_key=api_key,
         system_prompt=system_prompt,
@@ -130,7 +130,7 @@ def test_playbook_keep_rule_respected(provider, model, api_key, system_prompt):
 
 
 def test_playbook_anonymize_rule_respected(provider, model, api_key, system_prompt):
-    result = detect(
+    result, _ = detect(
         text="Tell Alice about the meeting",
         provider=provider, model=model, api_key=api_key,
         system_prompt=system_prompt,

@@ -66,11 +66,12 @@ def run_streaming(
     append_debug_trace("pipeline_step", {"step": "detection_start"}, request_id=request_id)
 
     try:
-        detection = detect(
+        detection, detection_reasoning = detect(
             text=text,
             provider=detection_cfg["provider"],
             model=detection_cfg["model"],
             api_key=detection_cfg["api_key"],
+            base_url=detection_cfg.get("base_url", ""),
             system_prompt=system_prompt,
             playbook=playbook,
             existing_map=existing_map,
@@ -88,6 +89,9 @@ def run_streaming(
         },
         request_id=request_id,
     )
+
+    if detection_reasoning:
+        yield {"type": "detection_reasoning", "content": detection_reasoning}
 
     # Phase 2: Clarification check
     if detection.ambiguities:

@@ -1,37 +1,15 @@
 from __future__ import annotations
 
-import json
 import logging
-import re
-from typing import Any
 
+import instructor
 from google import genai
-from google.genai import types as genai_types
-from pydantic import BaseModel
+from openai import OpenAI
 
+from core.fake_data import fake_replacement
 from core.types import DetectionResult, PlaybookEntry
 
 logger = logging.getLogger("cloakchat.detect")
-
-
-def _extract_json(raw: str) -> dict[str, Any]:
-    """Robust JSON extraction — handles markdown fences and trailing text."""
-    text = re.sub(r"```(?:json)?\s*\n?", "", raw)
-    text = text.replace("```", "").strip()
-    # Find the first JSON bracket
-    for start_char, end_char in (("{", "}"), ("[", "]")):
-        start = text.find(start_char)
-        if start == -1:
-            continue
-        decoder = json.JSONDecoder()
-        try:
-            obj, _ = decoder.raw_decode(text, start)
-            return obj
-        except json.JSONDecodeError:
-            continue
-    raise json.JSONDecodeError(f"No JSON object found in: {raw[:200]}", raw, 0)
-
-_client_cache: dict[str, genai.Client] = {}
 
 DETECTION_INSTRUCTIONS = """You are CloakChat's privacy detection agent.
 Your job is to detect PII and decide which entities can be anonymized
@@ -63,70 +41,6 @@ For every ambiguity, provide:
 """
 
 
-def _get_client(api_key: str) -> genai.Client:
-    """Cache the GenAI client by API key."""
-    if api_key not in _client_cache:
-        _client_cache[api_key] = genai.Client(api_key=api_key)
-    return _client_cache[api_key]
-
-
-def _strip_additional_props(schema: dict[str, Any]) -> dict[str, Any]:
-    """Strip additionalProperties from schema (Gemini API doesn't support it)."""
-    cleaned = {k: v for k, v in schema.items() if k != "additionalProperties"}
-    if "properties" in cleaned and isinstance(cleaned["properties"], dict):
-        cleaned["properties"] = {
-            k: _strip_additional_props(v) for k, v in cleaned["properties"].items()
-        }
-    if "items" in cleaned and isinstance(cleaned["items"], dict):
-        cleaned["items"] = _strip_additional_props(cleaned["items"])
-    if "$defs" in cleaned:
-        del cleaned["$defs"]
-    if "allOf" in cleaned:
-        del cleaned["allOf"]
-    return cleaned
-
-
-def _resolve_refs(schema: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
-    """Resolve $ref pointers and strip additionalProperties from the result."""
-    if "$ref" in schema:
-        ref_name = schema["$ref"].split("/")[-1]
-        if ref_name in defs:
-            resolved = dict(defs[ref_name])
-            # Recurse into the resolved definition to handle nested refs
-            return _resolve_refs(resolved, defs)
-        return {}
-
-    # Strip additionalProperties first (safe — doesn't touch $ref)
-    cleaned = _strip_additional_props(schema)
-
-    # Resolve refs in properties (these may contain $ref → need resolving)
-    if "properties" in cleaned and isinstance(cleaned["properties"], dict):
-        cleaned["properties"] = {
-            k: _resolve_refs(v, defs) for k, v in cleaned["properties"].items()
-        }
-
-    # Resolve refs in items (for array fields — these often contain $ref)
-    if "items" in cleaned and isinstance(cleaned["items"], dict):
-        if "$ref" in cleaned["items"]:
-            ref_name = cleaned["items"]["$ref"].split("/")[-1]
-            if ref_name in defs:
-                cleaned["items"] = _resolve_refs(dict(defs[ref_name]), defs)
-            else:
-                cleaned["items"] = {}
-        else:
-            cleaned["items"] = _resolve_refs(cleaned["items"], defs)
-
-    return cleaned
-
-
-def _pydantic_to_genai_schema(model: type[BaseModel]) -> genai_types.Schema:
-    """Convert Pydantic model to Gemini-compatible Schema (no additionalProperties, no $ref)."""
-    raw = model.model_json_schema()
-    defs = raw.pop("$defs", {})
-    cleaned = _resolve_refs(raw, defs)
-    return genai_types.Schema(**cleaned)
-
-
 def detect(
     text: str,
     provider: str,
@@ -135,41 +49,64 @@ def detect(
     system_prompt: str,
     playbook: list[PlaybookEntry],
     existing_map: dict[str, str],
-) -> DetectionResult:
-    """Run PII detection via native Gemini structured output.
+    base_url: str = "",
+) -> tuple[DetectionResult, str]:
+    """Run PII detection via instructor structured output.
 
-    Uses response_mime_type="application/json" with response_schema
-    as recommended by the official Gemma 4 docs.
+    Supports Google GenAI (provider="google") and OpenAI-compatible
+    providers. Returns the parsed detection result and any reasoning
+    text (empty when unavailable).
     """
-    prompt = _build_prompt(system_prompt, playbook, existing_map)
-    client = _get_client(api_key)
+    user_prompt = _build_prompt(text, system_prompt, playbook, existing_map)
     logger.info("[DETECT] provider=%s model=%s", provider, model)
 
-    schema = _pydantic_to_genai_schema(DetectionResult)
+    messages = [
+        {"role": "system", "content": DETECTION_INSTRUCTIONS},
+        {"role": "user", "content": user_prompt},
+    ]
 
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=genai_types.GenerateContentConfig(
+    try:
+        if provider == "google":
+            raw_client = genai.Client(api_key=api_key)
+            client = instructor.from_genai(raw_client)
+        else:
+            raw_client = OpenAI(api_key=api_key, base_url=base_url or None)
+            client = instructor.from_openai(raw_client)
+
+        result = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            response_model=DetectionResult,
             temperature=1.0,
-            response_mime_type="application/json",
-            response_schema=schema,
-        ),
-    )
+        )
+    except Exception as e:
+        logger.error("[DETECT] Detection failed: %s", e)
+        raise RuntimeError(f"PII detection failed: {e}") from e
 
-    raw = response.text.strip()
-    logger.debug("[DETECT] Raw response: %s", raw[:200])
-    data = _extract_json(raw)
-    logger.debug("[DETECT] Parsed JSON: %s", json.dumps(data)[:200])
-    return DetectionResult.model_validate(data)
+    # Fallback: generate replacements when the model leaves them empty
+    for replacement in result.replacements:
+        if not replacement.replacement:
+            replacement.replacement = fake_replacement(
+                replacement.entity_type, replacement.original, replacement.original
+            )
+
+    for ambiguity in result.ambiguities:
+        if not ambiguity.suggested_replacement:
+            ambiguity.suggested_replacement = fake_replacement(
+                ambiguity.entity_type, ambiguity.original, ambiguity.original
+            )
+
+    reasoning = ""
+    return result, reasoning
 
 
 def _build_prompt(
+    text: str,
     system_prompt: str,
     playbook: list[PlaybookEntry],
     existing_map: dict[str, str],
 ) -> str:
-    parts = [DETECTION_INSTRUCTIONS]
+    parts = [f"Analyze the following text for PII:\n\n{text}"]
     if playbook:
         parts.append("Playbook rules (follow these exactly):\n" + "\n".join(
             f'- "{e.original}" ({e.entity_type}) → {e.action}' for e in playbook

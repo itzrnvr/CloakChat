@@ -40,7 +40,7 @@ PII is **never** sent to the cloud at any point. The cloud LLM only ever sees re
 
 | Layer | Technology |
 |---|---|
-| Backend | Python 3.12+, FastAPI, PydanticAI, OpenAI-compatible client, uvicorn |
+| Backend | Python 3.12+, FastAPI, Instructor, any-llm-sdk, Google GenAI, uvicorn |
 | Frontend | React, TypeScript, Vite, Bun, Zustand |
 | Communication | SSE (Server-Sent Events) |
 | LLM providers | OpenAI-compatible endpoints through LiteLLM, plus Google GenAI |
@@ -200,7 +200,7 @@ The backend logs every request, pipeline step, and error to the terminal in real
 ```
 14:32:01 | cloakchat.chat       | INFO     | [REQUEST] POST /api/chat
 14:32:01 | cloakchat.chat       | INFO     | [REQUEST] Message: 'john weds mandy'
-14:32:01 | cloakchat.privacy_agent | INFO   | PydanticAI privacy detector request
+14:32:01 | cloakchat.detect     | INFO     | [DETECT] Running structured PII detection
 14:32:02 | cloakchat.chat       | INFO     | [DETECTION] Found 2 new PII replacements
 14:32:02 | cloakchat.chat       | INFO     | [ANONYMIZED] 'Marcus weds Claire'
 14:32:03 | cloakchat.llm        | INFO     | [CLOUD_LLM] Stream finished. Chunks received: 42
@@ -217,28 +217,33 @@ cloakchat/
 ├── backend/
 │   ├── main.py          # FastAPI app, CORS, uvicorn entrypoint
 │   ├── config.py        # Loads config.json + env var overrides
+│   ├── deps.py          # Dependency injection for config, playbook
+│   ├── playbook.py      # Playbook load/save logic
+│   ├── debug_trace.py   # Pipeline debug trace persistence
 │   └── routes/
-│       ├── chat.py      # POST /api/chat  (SSE streaming)
-│       └── config.py    # GET  /api/config (masked keys)
+│       ├── chat.py      # POST /api/chat, /api/chat/clarify (SSE streaming)
+│       ├── config.py    # GET /api/config, PUT /api/config (masked keys)
+│       └── sessions.py  # GET/POST/DELETE /api/sessions
 ├── core/
-│   ├── privacy_agent.py # Typed PydanticAI PII detection
-│   ├── replacement.py   # Apply replacements → EntityMap
-│   ├── reconstruction.py# Restore PII from EntityMap
-│   ├── validate.py      # Check anonymization quality
-│   ├── pipeline.py      # Orchestrates full pipeline (streaming + non-streaming)
-│   ├── llm.py           # OpenAI-compatible cloud streaming
-│   └── types.py         # Shared data classes
+│   ├── detect.py        # Structured PII detection via native GenAI or Instructor
+│   ├── anonymize.py     # Apply replacements, reconstruct, validate
+│   ├── cloud.py         # Cloud LLM streaming via any-llm-sdk
+│   ├── pipeline.py      # Orchestrates full pipeline (streaming)
+│   ├── verify.py        # Reconstruction leak checking
+│   ├── fake_data.py     # Realistic fictional replacement generator
+│   └── types.py         # Shared data models
 ├── frontend/
 │   └── src/
 │       ├── stores/appStore.ts   # Zustand state (messages, history, entity map)
 │       ├── hooks/useChat.ts     # SSE client, session update logic
 │       ├── hooks/useSSE.ts      # SSE connection management
+│       ├── hooks/useSessions.ts # Session CRUD hooks
 │       └── components/
 │           ├── chat/            # Message list, input, container
 │           ├── xray/            # Pipeline trace visualizer
-│           └── sidebar/
+│           └── sidebar/         # Config panel, status indicators
 ├── tests/               # Backend + frontend tests
-├── config.json          # Runtime configuration
+├── config.json          # Runtime configuration (gitignored)
 ├── requirements.txt     # Pinned Python dependencies
 ├── start.sh             # One-command start (Linux/macOS)
 ├── start.bat            # One-command start (Windows)
@@ -268,6 +273,26 @@ Used when the UI receives a `clarification_required` event. User choices are sav
 ### `GET /api/config`
 
 Returns the active config. Password inputs hide keys in the UI, but real values round-trip through the API.
+
+### `PUT /api/config`
+
+Updates the active config. Changes are persisted to `data/user_settings.json`.
+
+### `GET /api/sessions`
+
+Lists all saved sessions with their metadata.
+
+### `POST /api/sessions`
+
+Creates or updates a session with full conversation history, entity map, and trace groups.
+
+### `GET /api/sessions/{session_id}`
+
+Retrieves a specific session by ID.
+
+### `DELETE /api/sessions/{session_id}`
+
+Deletes a specific session.
 
 ---
 

@@ -259,8 +259,14 @@ function HighlightedText({ text, terms, variant }: { text: string; terms: string
 
 function getEntityMap(group: TraceGroup): Record<string, string> {
   const reconstruction = group.events.find(e => e.type === 'reconstruction')
-  const fromReconstruction = (reconstruction?.content as Record<string, unknown> | undefined)?.entity_map as Record<string, string> | undefined
-  if (fromReconstruction) return fromReconstruction
+  const raw = (reconstruction?.content as Record<string, unknown> | undefined)?.entity_map
+  if (raw) {
+    // entity_map may be { forward: {...}, reverse: {...} } or flat Record<string, string>
+    if (typeof raw === 'object' && raw !== null && 'forward' in raw) {
+      return (raw as Record<string, Record<string, string>>).forward
+    }
+    return raw as Record<string, string>
+  }
 
   const detection = group.events.find(e => e.type === 'detection')
   const replacements = ((detection?.content as Record<string, unknown> | undefined)?.replacements as Array<{original: string; placeholder: string}> | undefined) ?? []

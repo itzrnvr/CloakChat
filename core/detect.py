@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 
 import instructor
 from google import genai
+from google.genai import types as genai_types
 from openai import OpenAI
 
 from core.fake_data import fake_replacement
@@ -11,34 +14,105 @@ from core.types import DetectionResult, PlaybookEntry
 
 logger = logging.getLogger("cloakchat.detect")
 
-DETECTION_INSTRUCTIONS = """You are CloakChat's privacy detection agent.
-Your job is to detect PII and decide which entities can be anonymized
-immediately vs which need user clarification.
+DETECTION_INSTRUCTIONS = """Detect PII entities in the user text.
 
-CRITICAL: ALL PERSON names go to ambiguities. NEVER put a PERSON name
-in replacements. The user decides if each person is public (keep) or
-private (anonymize).
+Rules:
+- Auto-replace clearly private PII (EMAIL, PHONE, SSN, credit card, etc.) with realistic substitutes.
+- Flag ANY entity as ambiguous when unsure whether it should be kept or anonymized (person names, organizations, locations, etc.).
+- Each replacement must have a realistic fictional substitute, NOT [REDACTED].
+- Each ambiguity needs: question, reason, 2 options (keep/anonymize).
+- Ignore generic titles: 'the president', 'my boss', 'my friend'.
+- Follow playbook rules: if an entity has a playbook action, do NOT flag it again."""
 
-Replacements: non-PERSON PII that is clearly private and can be safely
-anonymized immediately (EMAIL, PHONE, SSN, ADDRESS, etc.).
 
-Ambiguities: any entity where the privacy decision needs the user's input.
-This includes every PERSON name, plus contextual non-PERSON entities.
+def _resolve_refs(schema: dict, defs: dict | None = None) -> dict:
+    """Recursively resolve $ref pointers in a JSON schema."""
+    defs = defs or schema.get("$defs", schema.get("definitions", {}))
+    resolved = {}
+    for key, value in schema.items():
+        if key in ("$defs", "definitions"):
+            continue
+        if isinstance(value, dict):
+            if "$ref" in value:
+                ref_name = value["$ref"].split("/")[-1]
+                resolved[key] = _resolve_refs(defs[ref_name], defs)
+                for k2, v2 in value.items():
+                    if k2 != "$ref":
+                        resolved[key][k2] = v2 if not isinstance(v2, dict) else _resolve_refs(v2, defs)
+            else:
+                resolved[key] = _resolve_refs(value, defs)
+        elif isinstance(value, list):
+            resolved[key] = [_resolve_refs(item, defs) if isinstance(item, dict) else item for item in value]
+        else:
+            resolved[key] = value
+    return resolved
 
-Do NOT flag generic titles or unnamed references as ambiguities.
-These are NOT ambiguities: 'the president', 'my boss', 'my friend'.
-These ARE ambiguities: 'Obama', 'John', 'Priya', any specific named person.
 
-Every replacement must be a realistic, fictional, natural-language substitute.
-Never use placeholder values like PERSON_1, [REDACTED], or string.
+def _strip_extras(schema: dict) -> dict:
+    """Strip keys that Google GenAI Schema doesn't accept."""
+    skip = {"additionalProperties", "title", "$defs", "definitions", "$ref", "allOf", "anyOf", "oneOf"}
+    cleaned = {k: v for k, v in schema.items() if k not in skip}
+    if "properties" in cleaned and isinstance(cleaned["properties"], dict):
+        cleaned["properties"] = {k: _strip_extras(v) for k, v in cleaned["properties"].items()}
+    if "items" in cleaned and isinstance(cleaned["items"], dict):
+        cleaned["items"] = _strip_extras(cleaned["items"])
+    return cleaned
 
-For every ambiguity, provide:
-- A user-facing clarification question
-- reason: short explanation of why this needs clarification
-- options: exactly 2 options with id, label, action, resolution fields:
-  1. {"id": "keep_public", "label": "Public/known, keep as-is", "action": "keep", "resolution": "public"}
-  2. {"id": "anonymize_private", "label": "Private, anonymize it", "action": "anonymize", "resolution": "private"}
-"""
+
+def _extract_json(raw: str) -> dict:
+    """Robust JSON extraction from model output."""
+    text = re.sub(r"```(?:json)?\s*\n?", "", raw)
+    text = text.replace("```", "").strip()
+    for start_char, end_char in (("{", "}"), ("[", "]")):
+        start = text.find(start_char)
+        if start == -1:
+            continue
+        decoder = json.JSONDecoder()
+        try:
+            obj, _ = decoder.raw_decode(text, start)
+            return obj
+        except json.JSONDecodeError:
+            continue
+    raise json.JSONDecodeError(f"No JSON object found in: {raw[:200]}", raw, 0)
+
+
+_genai_client_cache: dict[str, genai.Client] = {}
+
+
+def _get_genai_client(api_key: str) -> genai.Client:
+    if api_key not in _genai_client_cache:
+        _genai_client_cache[api_key] = genai.Client(api_key=api_key)
+    return _genai_client_cache[api_key]
+
+
+def _detect_genai_native(
+    api_key: str,
+    model: str,
+    messages: list[dict],
+) -> DetectionResult:
+    """Detection using native Google GenAI structured output."""
+    client = _get_genai_client(api_key)
+
+    raw_schema = DetectionResult.model_json_schema()
+    resolved = _resolve_refs(raw_schema)
+    cleaned = _strip_extras(resolved)
+    schema = genai_types.Schema(**cleaned)
+
+    # Combine system + user into a single contents string for GenAI
+    contents = "\n\n".join(m["content"] for m in messages)
+
+    response = client.models.generate_content(
+        model=model,
+        contents=contents,
+        config=genai_types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=schema,
+        ),
+    )
+    raw = response.text.strip()
+    logger.debug("[DETECT] Raw genai response: %s", raw[:200])
+    data = _extract_json(raw)
+    return DetectionResult.model_validate(data)
 
 
 def detect(
@@ -51,11 +125,10 @@ def detect(
     existing_map: dict[str, str],
     base_url: str = "",
 ) -> tuple[DetectionResult, str]:
-    """Run PII detection via instructor structured output.
+    """Run PII detection.
 
-    Supports Google GenAI (provider="google") and OpenAI-compatible
-    providers. Returns the parsed detection result and any reasoning
-    text (empty when unavailable).
+    Google GenAI uses native structured output (instructor hangs on
+    complex schemas). OpenAI-compatible providers use instructor.
     """
     user_prompt = _build_prompt(text, system_prompt, playbook, existing_map)
     logger.info("[DETECT] provider=%s model=%s", provider, model)
@@ -67,18 +140,16 @@ def detect(
 
     try:
         if provider == "google":
-            raw_client = genai.Client(api_key=api_key)
-            client = instructor.from_genai(raw_client)
+            result = _detect_genai_native(api_key, model, messages)
         else:
             raw_client = OpenAI(api_key=api_key, base_url=base_url or None)
             client = instructor.from_openai(raw_client)
-
-        result = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            response_model=DetectionResult,
-            temperature=1.0,
-        )
+            result = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_model=DetectionResult,
+                temperature=1.0,
+            )
     except Exception as e:
         logger.error("[DETECT] Detection failed: %s", e)
         raise RuntimeError(f"PII detection failed: {e}") from e

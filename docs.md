@@ -1,24 +1,21 @@
 # CloakChat — Documentation
 
 Privacy-preserving AI chat: anonymize PII before sending to a cloud LLM, then reconstruct the response. Supports multi-turn conversations while keeping all PII local.
-# CloakChat — Documentation
-
-Privacy-preserving AI chat: anonymize PII before sending to a cloud LLM, then reconstruct the response. Supports multi-turn conversations while keeping all PII local.
 
 ---
 
 ## Architecture
 
 ```
-1.  **Reasoning**: Local model thinks about privacy implications (shown in X-Ray)
-2.  **Detect NEW PII**: Local LLM finds sensitive data, skipping already-known entities
-3.  **Ambiguity Check**: If unclear (e.g., public figure vs. private person), asks user for clarification
-4.  **Replace PII**: Substitutes real data with realistic fake names/info
-5.  **Validate**: Ensures no original PII remains in the anonymized text
-6.  **Cloud Inference**: Sends sanitized message + history to cloud provider
+1.  **Detect**: Local LLM finds sensitive data, skipping already-known entities; emits reasoning
+2.  **Ambiguity Check**: If unclear (e.g., public figure vs. private person), asks user for clarification
+3.  **Anonymize**: Substitutes real data with realistic fake names/info
+4.  **Validate**: Ensures no original PII remains in the anonymized text
+5.  **Cloud Prompt**: Builds sanitized message + history for the cloud provider
+6.  **Cloud Response**: Streams response chunks from the cloud LLM
 7.  **Reconstruct**: Swaps fake names back for originals locally
-8.  **Verify**: Local model checks reconstruction quality and fixes any leaks
-9.  **Store**: Frontend accumulates entity map and playbook decisions
+8.  **Verify Reconstruction**: Local model checks reconstruction quality and fixes any leaks
+9.  **Entity Map Update**: Frontend accumulates new original→placeholder entries
 ```
 
 ---
@@ -78,7 +75,7 @@ Known keys (absorbed by CloakChat, not forwarded): `model`, `base_url`, `api_key
 
 | Value | Description |
 |---|---|
-| `tool` | PydanticAI tool-output mode. Best default for OpenAI-compatible tool calling. |
+| `tool` | OpenAI-compatible tool calling mode. Best default for endpoints with tool support. |
 | `prompted` | Schema-in-prompt JSON mode for endpoints without tool support. |
 | `native` | Provider-native JSON schema output when supported. |
 
@@ -106,36 +103,33 @@ Data classes shared across all modules.
 - **`EntityMap`** — bidirectional mapping: `forward` (original→placeholder), `reverse` (placeholder→original)
 - **`PipelineResult`** — full result of a pipeline run
 
-### `core/privacy_agent.py`
+### `core/detect.py`
 
-Detects PII with PydanticAI structured output.
+Detects PII using structured output with Pydantic models.
 
 ```python
-detect_pii_with_agent(text, cfg, system_prompt, existing_map=None) -> DetectionResult
+detect(text, provider, model, api_key, base_url, system_prompt, playbook, existing_map=None) -> tuple[DetectionResult, str]
 ```
 
-- Builds a typed PydanticAI agent over an OpenAI-compatible endpoint
+- Supports OpenAI-compatible tool calling, native Google GenAI structured output, or schema-in-prompt JSON mode
 - `existing_map`: if provided (multi-turn), appends two hints to the system prompt:
   1. Already-anonymized entity mappings (`"john" → "Marcus"`) — LLM is told to skip these
   2. Already-used placeholder names — LLM is told **not to reuse** these for new entities (prevents collisions)
 - Uses typed `replacements` and `ambiguities`
 - Post-filters: strips any returned entities already present in `existing_map`
-- Returns `DetectionResult` for **new entities only**
+- Returns `DetectionResult` and reasoning string for **new entities only**
 
-### `core/replacement.py`
+### `core/anonymize.py`
 
-Applies replacements to text.
+Applies replacements to text, restores original PII in cloud responses, and validates anonymization quality.
 
 ```python
-apply_replacements(text, replacements) -> (anonymized_text, EntityMap)
+apply_replacements(text, replacements, existing_map=None) -> (anonymized_text, full_entity_map)
 ```
 
 - Sorts by original length (longest first) to prevent partial replacements
-- Returns anonymized text and bidirectional entity map
-
-### `core/reconstruction.py`
-
-Restores original PII in cloud response.
+- Merges with existing map for multi-turn consistency
+- Returns anonymized text and bidirectional entity map (`forward` and `reverse`)
 
 ```python
 reconstruct(text, entity_map) -> str
@@ -144,10 +138,6 @@ reconstruct(text, entity_map) -> str
 - Replaces placeholders with originals using `entity_map.reverse`
 - Sorts by placeholder length (longest first)
 
-### `core/validate.py`
-
-Checks anonymization quality.
-
 ```python
 validate(anonymized_text, entity_map) -> {"valid": bool, "errors": list[str]}
 ```
@@ -155,12 +145,12 @@ validate(anonymized_text, entity_map) -> {"valid": bool, "errors": list[str]}
 - Checks forward/reverse map consistency
 - Checks no original PII remains in anonymized text
 
-### `core/llm.py`
+### `core/cloud.py`
 
-Factory function for the cloud streaming callable. Uses the OpenAI-compatible Python client.
+Streams cloud LLM responses via the any-llm-sdk.
 
 ```python
-create_cloud_llm(cfg: dict) -> Callable       # streaming, yields chunks
+stream_cloud(provider, model, api_key, base_url, messages) -> Generator[str, None, None]
 ```
 
 - Env var fallback for API keys
@@ -188,15 +178,16 @@ run_streaming(text, detection_cfg, cloud_llm, system_prompt,
 | `detection` | `replacements: [{original, placeholder, entity_type}]` | New PII found this turn |
 | `anonymized` | `text: str` | Current message after replacement |
 | `validation` | `valid: bool, errors: list[str]` | Anonymization quality check |
+| `cloud_prompt` | `messages: list[dict], history_turns: int` | Sanitized prompt sent to cloud LLM |
 | `cloud_chunk` | `content: str` | Streaming response chunk from cloud LLM |
 | `reconstruction` | `text: str` | Final response with PII restored |
 | `reconstruction_verification` | `valid, leaks, notes, reasoning` | Quality check and fixes by local model |
-| `entity_map_update` | `new_entries: dict, anonymized_message: str` | New original→placeholder entries from this turn |
-| `playbook_updated` | `entry: dict, remembered: bool` | User decision saved to playbook |
+| `entity_map_update` | `new_entries: dict` | New original→placeholder entries from this turn |
+| `error` | `content: str` | Pipeline failure (e.g., detection failed) |
 | `done` | — | Stream complete |
 
 **Multi-turn behaviour in `run_streaming`:**
-- Detection only finds NEW entities (passes `existing_map` to `detect_pii_with_agent`)
+- Detection only finds NEW entities (passes `existing_map` to `detect`)
 
 ## Frontend — `frontend/`
 
@@ -264,7 +255,7 @@ If you run via `start.bat`, the backend stays in the foreground terminal so all 
 --- Turn 1 ---
 Input:  "john weds mandy"
 
-detect_pii → [john → Marcus, mandy → Claire]
+detect → [john → Marcus, mandy → Claire]
 anonymized → "Marcus weds Claire"
 cloud_llm  → "Wishing Marcus and Claire a lifetime of love..."
 reconstruct→ "Wishing john and mandy a lifetime of love..."
@@ -273,7 +264,7 @@ entity_map accumulated: { john: Marcus, mandy: Claire }
 --- Turn 2 ---
 Input:  "who weds who?"
 
-detect_pii → [] (no new PII; john/mandy not in message)
+detect → [] (no new PII; john/mandy not in message)
 anonymized → "who weds who?"
 cloud receives history: ["Marcus weds Claire", "Wishing Marcus and Claire..."]
              + current: "who weds who?"

@@ -9,7 +9,7 @@ The project implements a multi-stage pipeline:
 5.  **Entity Mapping**: It maintains a persistent map so that "John" stays "Marcus" across the entire multi-turn conversation.
 
 ### Technical Stack
-*   **Backend**: Python (FastAPI) + PydanticAI for managing structured PII detection.
+*   **Backend**: Python (FastAPI) + native structured output via GenAI schema (or Instructor for OpenAI-compatible providers).
 *   **Frontend**: React (TypeScript) + Vite, featuring an **"X-Ray View"** that visualizes each step of the detection and reconstruction process in real-time.
 *   **Communication**: Server-Sent Events (SSE) for end-to-end response streaming.
 

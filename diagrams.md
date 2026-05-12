@@ -28,11 +28,11 @@ flowchart TD
     subgraph CORE["CORE PIPELINE — Pure Python"]
         direction TB
         Pipeline["pipeline.py — Orchestrator"]
-        Detection["privacy_agent.py — PII Detection"]
-        Replacement["replacement.py — Anonymization"]
-        Validation["validate.py — Quality Check"]
-        Reconstruction["reconstruction.py — PII Restoration"]
-        LLMFactory["llm.py — OpenAI-compatible Streaming"]
+        Detection["detect.py — PII Detection"]
+        Replacement["anonymize.py — Anonymization"]
+        Validation["anonymize.py — Quality Check (validate function)"]
+        Reconstruction["anonymize.py — PII Restoration (reconstruct function)"]
+        LLMFactory["cloud.py — OpenAI-compatible Streaming"]
         Types["types.py — Replacement · EntityMap · PipelineResult"]
     end
 
@@ -79,14 +79,14 @@ flowchart TD
 
     C --> D["core/pipeline.py\nrun_streaming()"]
 
-    D --> E["core/privacy_agent.py\ndetect_pii_with_agent()\n\nTyped PydanticAI detection\nSkips already-known entities\nin existing entity_map"]
+    D --> E["core/detect.py\ndetect_pii_with_agent()\n\nnative GenAI structured output (or Instructor for OpenAI providers) detection\nSkips already-known entities\nin existing entity_map"]
 
     E --> F{"New PII\nfound?"}
 
-    F -->|"Yes"| G["core/replacement.py\napply_replacements()\n\nReplace original PII with\nrealistic fake substitutes\ne.g. John → Marcus\njohn@corp.com → marcus@placeholder.com"]
+    F -->|"Yes"| G["core/anonymize.py\napply_replacements()\n\nReplace original PII with\nrealistic fake substitutes\ne.g. John → Marcus\njohn@corp.com → marcus@placeholder.com"]
     F -->|"No new PII"| H["Keep text as-is\n(existing map still applies)"]
 
-    G --> I["core/validate.py\nvalidate()\n\nCheck no original PII remains\nin anonymized text\nVerify map consistency"]
+    G --> I["core/anonymize.py\nvalidate()\n\nCheck no original PII remains\nin anonymized text\nVerify map consistency"]
     H --> I
 
     I --> J{"Validation\nPassed?"}
@@ -97,13 +97,13 @@ flowchart TD
 
     M["Build cloud messages\n\nanonymizedHistory (prior turns)\n+ current anonymized message"]
 
-    M --> N["core/llm.py → Cloud LLM\n\nSend ONLY anonymized content\nCloud NEVER sees real PII\nStreaming mode"]
+    M --> N["core/cloud.py → Cloud LLM\n\nSend ONLY anonymized content\nCloud NEVER sees real PII\nStreaming mode"]
 
     N --> O["Stream cloud response chunks\n→ Emit cloud_chunk SSE events\n→ Frontend renders in real-time"]
 
-    O --> P["core/reconstruction.py\nreconstruct()\n\nSwap placeholders → originals\nUsing full session EntityMap\n(prior turns + current turn)"]
+    O --> P["core/anonymize.py\nreconstruct()\n\nSwap placeholders → originals\nUsing full session EntityMap\n(prior turns + current turn)"]
 
-    P --> Q["core/privacy_agent.py\nverify_reconstruction_with_agent()\n\nLocal model checks for leaks\nand corrects deanonymization"]
+    P --> Q["core/detect.py\nverify_reconstruction_with_agent()\n\nLocal model checks for leaks\nand corrects deanonymization"]
 
     Q --> R["Emit reconstruction SSE event\nFinal response with real names\nshown to user"]
 
@@ -298,11 +298,11 @@ graph LR
 
     subgraph "Core Layer"
         pipeline["core/pipeline.py\nOrchestrator"]
-        detection["core/privacy_agent.py"]
-        replacement["core/replacement.py"]
-        validate["core/validate.py"]
-        reconstruction["core/reconstruction.py"]
-        llm["core/llm.py\nOpenAI-compatible streaming"]
+        detection["core/detect.py"]
+        replacement["core/anonymize.py"]
+        validate["core/anonymize.py"]
+        reconstruction["core/anonymize.py"]
+        llm["core/cloud.py\nOpenAI-compatible streaming"]
         types["core/types.py"]
     end
 
@@ -356,6 +356,6 @@ graph LR
 | **Privacy Guarantee** | Real PII is detected and replaced *locally*; cloud LLM only sees realistic fake substitutes |
 | **Multi-turn Safety** | `entity_map` accumulates across turns — same person always maps to same placeholder |
 | **Communication** | SSE (Server-Sent Events) for real-time streaming end-to-end |
-| **LLM Abstraction** | PydanticAI handles typed detection; OpenAI-compatible client handles streaming chat |
+|| **LLM Abstraction** | native GenAI structured output (or Instructor for OpenAI providers) handles typed detection; OpenAI-compatible client handles streaming chat |
 | **Frontend State** | Zustand manages session: reconstructed messages, anonymized history, and entity map |
 | **Observability** | X-Ray panel shows every pipeline step live: detection, anonymization, validation, cloud output, reconstruction, verification |

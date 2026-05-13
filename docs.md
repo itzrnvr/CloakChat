@@ -97,15 +97,12 @@ Data classes shared across all modules.
 Detects PII using structured output with Pydantic models.
 
 ```python
-detect(text, provider, model, api_key, base_url, system_prompt, playbook, existing_map=None) -> tuple[DetectionResult, str]
+detect(text, provider, model, api_key, system_prompt, playbook, existing_map, base_url="") -> tuple[DetectionResult, str]
 ```
 
-- Supports OpenAI-compatible tool calling and native Google GenAI structured output
-- `existing_map`: if provided (multi-turn), appends two hints to the system prompt:
-  1. Already-anonymized entity mappings (`"john" → "Marcus"`) — LLM is told to skip these
-  2. Already-used placeholder names — LLM is told **not to reuse** these for new entities (prevents collisions)
+- Supports native Google GenAI structured output and OpenAI-compatible via Instructor
+- `existing_map`: if provided (multi-turn), the LLM is told to skip already-anonymized entities and avoid reusing placeholder names
 - Uses typed `replacements` and `ambiguities`
-- Post-filters: strips any returned entities already present in `existing_map`
 - Returns `DetectionResult` and reasoning string for **new entities only**
 
 ### `core/anonymize.py`
@@ -113,7 +110,7 @@ detect(text, provider, model, api_key, base_url, system_prompt, playbook, existi
 Applies replacements to text, restores original PII in cloud responses, and validates anonymization quality.
 
 ```python
-apply_replacements(text, replacements, existing_map=None) -> tuple[str, EntityMap]
+apply_replacements(text, replacements, existing_map) -> tuple[str, EntityMap]
 ```
 
 - Sorts by original length (longest first) to prevent partial replacements
@@ -150,14 +147,17 @@ stream_cloud(provider, model, api_key, base_url, messages) -> Generator[str, Non
 Orchestrates the full anonymization pipeline via streaming.
 
 ```python
-run_streaming(text, detection_cfg, cloud_llm, system_prompt,
-              history=None, entity_map=None) -> Generator[dict]
+run_streaming(text, detection_cfg, cloud_cfg, system_prompt,
+              history, entity_map, playbook,
+              request_id=None, simulate_cloud=False) -> Generator[dict]
 ```
 
 `run_streaming` yields SSE-ready event dicts:
 
 | Event type | Fields | Description |
 |---|---|---|
+| `step` | `content: str` | Pipeline phase milestone (e.g., "Detecting sensitive info") |
+| `playbook_updated` | `entries: [{original, entity_type, action, resolution, replacement}]` | New playbook entries from user clarification |
 | `detection_reasoning` | `content: str` | Local model's thinking process during detection |
 | `clarification_required` | `entity, entity_type, question, options` | User clarification needed before continuing |
 | `detection` | `replacements: [{original, replacement, entity_type}]` | New PII found this turn |
@@ -166,9 +166,11 @@ run_streaming(text, detection_cfg, cloud_llm, system_prompt,
 | `cloud_prompt` | `messages: list[dict], history_turns: int` | Sanitized prompt sent to cloud LLM |
 | `cloud_chunk` | `content: str` | Streaming response chunk from cloud LLM |
 | `reconstruction` | `text: str` | Final response with PII restored |
-| `reconstruction_verification` | `valid, corrected_text, leaks, notes` | Quality check and fixes by local model |
-| `entity_map_update` | `new_entries: dict` | New original→placeholder entries from this turn |
+| `reconstruction_verification` | `valid, corrected_text, leaks, notes` | Quality check and fixes by local model (Google GenAI only; skipped for other providers) |
+| `entity_map_update` | `new_entries: dict` | New original→placeholder entries from this turn (frontend captures `anonymized_message` separately from the `anonymized` event) |
 | `error` | `content: str` | Pipeline failure (e.g., detection failed) |
+| `heartbeat` | `content: str` | Keep-alive event during long operations |
+
 | `done` | — | Stream complete |
 
 **Multi-turn behaviour in `run_streaming`:**
@@ -192,7 +194,7 @@ React + Vite + TypeScript. State managed by Zustand (`appStore.ts`).
 On each `sendMessage`:
 1. Sends `{ message, history: anonymizedHistory, entity_map: entityMap }` to `/api/chat`
 2. Streams events back via SSE
-3. On `entity_map_update` event: captures new entries and the anonymized message
+3. On `entity_map_update` event: captures new entries (anonymized message already captured from the `anonymized` event earlier in the stream)
 4. On `done` event: calls `updateSession()` to append both sides of the turn (anonymized) to `anonymizedHistory` and merge new entries into `entityMap`
 
 ---
@@ -213,7 +215,7 @@ cd frontend && bun install && bun dev
 Or use the one-command scripts:
 
 - Linux / macOS: `./start.sh`
-- Windows: `start.bat`
+- Windows: `start.ps1`
 
 Both check prerequisites, kill stale processes, launch backend + frontend, and shut down together on exit.
 
@@ -222,15 +224,14 @@ Both check prerequisites, kill stale processes, launch backend + frontend, and s
 The backend logs every request, every pipeline step, and full tracebacks on crash. Format:
 
 ```
-14:32:01 | cloakchat.chat       | INFO     | [REQUEST] POST /api/chat
-14:32:01 | cloakchat.chat       | INFO     | [REQUEST] Message: 'john weds mandy'
-14:32:01 | cloakchat.llm        | INFO     | [DETECTION_LLM] model=openai/your-local-model ...
-14:32:02 | cloakchat.chat       | INFO     | [DETECTION] Found 2 new PII replacements
-14:32:02 | cloakchat.chat       | INFO     | [ANONYMIZED] 'Marcus weds Claire'
-14:32:03 | cloakchat.llm        | INFO     | [CLOUD_LLM] Stream finished. Chunks received: 42
+14:32:01 | cloakchat.chat       | INFO     | [REQUEST] POST /api/chat message='john weds mandy'
+14:32:01 | cloakchat.detect     | INFO     | [DETECT] provider=openai model=llama-3.1-8b
+14:32:02 | cloakchat.chat       | INFO     | [PIPELINE] Event type=detection
+14:32:02 | cloakchat.chat       | INFO     | [PIPELINE] Event type=anonymized
+14:32:03 | cloakchat.cloud      | INFO     | [CLOUD] provider=openai (resolved=openai) model=gpt-4o
 ```
 
-If you run via `start.bat`, the backend stays in the foreground terminal so all logs print directly. If you run manually, pass `--log-level info` or set the `LOG_LEVEL` env var.
+If you run via `start.ps1`, the backend stays in the foreground terminal so all logs print directly. If you run manually, pass `--log-level info` or set the `LOG_LEVEL` env var.
 
 ---
 

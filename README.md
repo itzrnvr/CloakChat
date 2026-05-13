@@ -86,7 +86,7 @@ bun dev
 ./start.sh
 ```
 
-**Windows:**
+**Windows (PowerShell):**
 ```powershell
 ./start.ps1
 ```
@@ -102,6 +102,7 @@ Edit `config.json` at the project root to set your model endpoints and options.
 ```json
 {
   "detection": {
+    "provider": "openai",
     "provider_type": "openai",
     "base_url": "http://localhost:8000/v1",
     "model": "your-local-model.gguf",
@@ -114,6 +115,7 @@ Edit `config.json` at the project root to set your model endpoints and options.
     }
   },
   "cloud": {
+    "provider": "openai",
     "provider_type": "openai",
     "base_url": "https://api.openai.com/v1",
     "model": "your-cloud-model",
@@ -183,12 +185,11 @@ CLOUD_BASE_URL=...
 The backend logs every request, pipeline step, and error to the terminal in real time. Log format:
 
 ```
-14:32:01 | cloakchat.chat       | INFO     | [REQUEST] POST /api/chat
-14:32:01 | cloakchat.chat       | INFO     | [REQUEST] Message: 'john weds mandy'
-14:32:01 | cloakchat.detect     | INFO     | [DETECT] Running structured PII detection
-14:32:02 | cloakchat.chat       | INFO     | [DETECTION] Found 2 new PII replacements
-14:32:02 | cloakchat.chat       | INFO     | [ANONYMIZED] 'Marcus weds Claire'
-14:32:03 | cloakchat.llm        | INFO     | [CLOUD_LLM] Stream finished. Chunks received: 42
+14:32:01 | cloakchat.chat       | INFO     | [REQUEST] POST /api/chat message='john weds mandy'
+14:32:01 | cloakchat.detect     | INFO     | [DETECT] provider=openai model=llama-3.1-8b
+14:32:02 | cloakchat.chat       | INFO     | [PIPELINE] Event type=detection
+14:32:02 | cloakchat.chat       | INFO     | [PIPELINE] Event type=anonymized
+14:32:03 | cloakchat.cloud      | INFO     | [CLOUD] provider=openai (resolved=openai) model=gpt-4o
 ```
 
 Full tracebacks are printed on any crash. If you run via `start.ps1`, the backend terminal shows all of this directly.

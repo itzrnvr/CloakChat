@@ -41,7 +41,7 @@ flowchart TD
     end
 
     LocalLLM(["🔒 Local LLM\nllama.cpp / Ollama / Google GenAI\nNEVER sees real PII"])
-    CloudLLM(["☁️ Cloud LLM\nOpenAI / Google Gemini / Anthropic\nOnly sees fake substitutes"])
+    CloudLLM(["☁️ Cloud LLM\nOpenAI / Google Gemini\nOnly sees fake substitutes"])
 
     A --> ChatUI
     ChatUI --> Hooks
@@ -53,7 +53,6 @@ flowchart TD
     Config --> ConfigRoute
     ChatRoute --> Pipeline
     ChatRoute --> ClarifyRoute
-    SessionRoute -->|"data/sessions.json"| PlaybookRoute
 
     Pipeline --> Detection
     Pipeline --> Replacement
@@ -121,7 +120,7 @@ flowchart TD
     W --> X["SSE: reconstruction_verification\n{valid, corrected_text, leaks, notes}"]
     X --> Y{"Verification\ncorrected text?"}
     Y -->|"Yes"| Z["SSE: reconstruction\n(with corrected_text)"]
-    Y -->|"No"| AA["SSE: entity_map_update\n{new_entries, anonymized_message}"]
+    Y -->|"No"| AA["SSE: entity_map_update\n{new_entries}"]
     Z --> AA
 
     AA --> AB["SSE: done\nFrontend updates session state"]
@@ -253,7 +252,7 @@ sequenceDiagram
         BE-->>FE: SSE: reconstruction<br/>{ text: corrected_text, entity_map }
     end
 
-    BE-->>FE: SSE: entity_map_update<br/>{ new_entries, anonymized_message }
+    BE-->>FE: SSE: entity_map_update<br/>{ new_entries }
 
     BE-->>FE: SSE: done
 
@@ -396,11 +395,11 @@ graph LR
     pipeline --> replacement
     pipeline --> verification
     pipeline --> llm
+    pipeline --> fake
     pipeline --> types
     detection --> types
     replacement --> types
     verification --> types
-    llm --> fake
     fake --> types
 
     App --> ChatComp

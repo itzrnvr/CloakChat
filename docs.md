@@ -26,16 +26,13 @@ Single source of truth for all runtime settings.
 
 | Field | Type | Description |
 |---|---|---|
-| `detection.provider_type` | string | `openai`, `genai`, or `other` |
-| `detection.base_url` | string | OpenAI-compatible endpoint for the detection model; leave empty for `genai` |
+| `detection.provider_type` | string | `openai`, `google`, or `other` |
+| `detection.base_url` | string | OpenAI-compatible endpoint for the detection model; leave empty for `google` |
 | `detection.model` | string | Model name for the selected provider |
 | `detection.api_key` | string | API key (`"local"` for llama.cpp servers) |
 | `detection.temperature` | float | Sampling temperature (low = more deterministic) |
 | `detection.timeout` | int | Request timeout in seconds for the detection provider |
 | `detection.max_tokens` | int | Max tokens for detection response |
-| `detection.output_mode` | string | `"tool"` / `"prompted"` / `"native"` |
-| `detection.verify_reconstruction` | bool | Run the extra local LLM verifier after reconstruction |
-| `detection.verification_timeout` | int | Short timeout for the verifier call |
 | `cloud.*` | — | Same fields as detection, for the cloud inference model |
 | `server.host` | string | Host to bind the backend server |
 | `server.port` | int | Port for the backend server |
@@ -48,11 +45,11 @@ Provider types:
 
 | Value | Description |
 |---|---|
-| `openai` | OpenAI-compatible endpoint through LiteLLM. |
-| `genai` | Google GenAI SDK. Use the Google API key and leave `base_url` empty. |
-| `other` | LiteLLM native provider routing; include the provider in the model id. |
+| `openai` | OpenAI-compatible endpoint through any-llm-sdk. |
+| `google` | Google GenAI SDK. Use the Google API key and leave `base_url` empty. |
+| `other` | any-llm-sdk native provider routing; include the provider in the model id. |
 
-For `genai`, CloakChat streams through the official Google GenAI chat API. For Gemma models, any system instruction is merged into the first user turn because Gemma does not support a separate `system` role.
+For `google`, CloakChat streams through the official Google GenAI chat API. For Gemma models, any system instruction is merged into the first user turn because Gemma does not support a separate `system` role.
 
 For Google GenAI, prefer a fast model like `gemini-2.5-flash-lite` for `detection`. Detection uses structured output, so it should be optimized for latency; the larger creative/chat model can still be used under `cloud`.
 
@@ -67,16 +64,15 @@ For Google GenAI, prefer a fast model like `gemini-2.5-flash-lite` for `detectio
 }
 ```
 
-Known keys (absorbed by CloakChat, not forwarded): `model`, `base_url`, `api_key`, `provider_type`, `temperature`, `timeout`, `max_tokens`, `verify_reconstruction`, `verification_timeout`, `output_mode`, `tool_mode`, `strict`. Everything else is forwarded as model settings.
+Known keys (absorbed by CloakChat, not forwarded): `model`, `base_url`, `api_key`, `provider_type`, `temperature`, `timeout`, `max_tokens`, `output_mode`, `tool_mode`, `strict`. Everything else is forwarded as model settings.
 
-**Env var overrides:** `DETECTION_API_KEY`, `CLOUD_API_KEY`, `DETECTION_BASE_URL`, `CLOUD_BASE_URL`
+**Env var overrides:** `DETECTION_API_KEY`, `CLOUD_BASE_URL`
 
 ### `output_mode` options
 
 | Value | Description |
 |---|---|
 | `tool` | OpenAI-compatible tool calling mode. Best default for endpoints with tool support. |
-| `prompted` | Schema-in-prompt JSON mode for endpoints without tool support. |
 | `native` | Provider-native JSON schema output when supported. |
 
 ### Placeholder style
@@ -99,9 +95,8 @@ Pure Python. No FastAPI. Can be used independently.
 
 Data classes shared across all modules.
 
-- **`Replacement`** — a detected PII entity: `original`, `placeholder`, `entity_type`
+- **`Replacement`** — a detected PII entity: `original`, `replacement`, `entity_type`
 - **`EntityMap`** — bidirectional mapping: `forward` (original→placeholder), `reverse` (placeholder→original)
-- **`PipelineResult`** — full result of a pipeline run
 
 ### `core/detect.py`
 
@@ -111,7 +106,7 @@ Detects PII using structured output with Pydantic models.
 detect(text, provider, model, api_key, base_url, system_prompt, playbook, existing_map=None) -> tuple[DetectionResult, str]
 ```
 
-- Supports OpenAI-compatible tool calling, native Google GenAI structured output, or schema-in-prompt JSON mode
+- Supports OpenAI-compatible tool calling and native Google GenAI structured output
 - `existing_map`: if provided (multi-turn), appends two hints to the system prompt:
   1. Already-anonymized entity mappings (`"john" → "Marcus"`) — LLM is told to skip these
   2. Already-used placeholder names — LLM is told **not to reuse** these for new entities (prevents collisions)
@@ -158,13 +153,9 @@ stream_cloud(provider, model, api_key, base_url, messages) -> Generator[str, Non
 
 ### `core/pipeline.py`
 
-Orchestrates the full anonymization pipeline.
+Orchestrates the full anonymization pipeline via streaming.
 
 ```python
-# Single-turn, non-streaming (no history support)
-run(text, detection_cfg, cloud_llm, system_prompt) -> PipelineResult
-
-# Multi-turn, streaming
 run_streaming(text, detection_cfg, cloud_llm, system_prompt,
               history=None, entity_map=None) -> Generator[dict]
 ```

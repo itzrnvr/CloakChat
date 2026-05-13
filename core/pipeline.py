@@ -8,7 +8,7 @@ from core.anonymize import apply_replacements, reconstruct, validate
 from core.cloud import stream_cloud
 from core.detect import detect
 from core.fake_data import fake_replacement
-from core.types import PlaybookEntry, Replacement
+from core.types import EntityMap, PlaybookEntry, Replacement
 from core.verify import verify_reconstruction
 
 logger = logging.getLogger("cloakchat.pipeline")
@@ -138,7 +138,7 @@ def run_streaming(
 
     append_debug_trace(
         "anonymization",
-        {"anonymized": anonymized, "entity_map": full_map, "validation": validation_result},
+        {"anonymized": anonymized, "entity_map": full_map.model_dump(), "validation": validation_result},
         request_id=request_id,
     )
 
@@ -167,7 +167,7 @@ def run_streaming(
     # Phase 5: Reconstruct
     yield {"type": "step", "content": "Reconstructing final response"}
     reconstructed = reconstruct(cloud_response, full_map)
-    yield {"type": "reconstruction", "text": reconstructed, "entity_map": full_map}
+    yield {"type": "reconstruction", "text": reconstructed, "entity_map": full_map.model_dump()}
 
     # Phase 6: Verify reconstruction
     yield {"type": "step", "content": "Verifying reconstruction"}
@@ -175,7 +175,7 @@ def run_streaming(
         verification = verify_reconstruction(
             cloud_response=cloud_response,
             deanonymized_text=reconstructed,
-            entity_map=full_map.get("forward", full_map) if isinstance(full_map, dict) else full_map,
+            entity_map=full_map.forward,
             provider=detection_cfg["provider"],
             model=detection_cfg["model"],
             api_key=detection_cfg["api_key"],
@@ -200,7 +200,7 @@ def run_streaming(
 
     # If verification corrected the text, emit updated reconstruction
     if final_text != reconstructed:
-        yield {"type": "reconstruction", "text": final_text, "entity_map": full_map}
+        yield {"type": "reconstruction", "text": final_text, "entity_map": full_map.model_dump()}
 
     yield {
         "type": "entity_map_update",

@@ -22,7 +22,7 @@ A modern React-based chat interface for CloakChat, built with Vite and TypeScrip
 - **Build Tool**: Vite
 - **Language**: TypeScript
 - **State Management**: Zustand
-- **Styling**: Tailwind CSS / Vanilla CSS
+- **Styling**: Tailwind CSS
 - **Package Manager**: Bun (recommended)
 
 ## Development

@@ -1,5 +1,6 @@
 {
   "detection": {
+    "provider": "openai",
     "provider_type": "openai",
     "base_url": "http://moonhowler.local:8000/v1",
     "model": "Qwen3.5-2B-Q6_K.gguf",
@@ -7,8 +8,6 @@
     "temperature": 0.1,
     "max_tokens": 2048,
     "timeout": 30,
-    "verify_reconstruction": false,
-    "verification_timeout": 8,
     "extra_body": {
       "chat_template_kwargs": {
         "enable_thinking": false
@@ -16,6 +15,7 @@
     }
   },
   "cloud": {
+    "provider": "openai",
     "provider_type": "openai",
     "base_url": "http://moonhowler.local:8000/v1",
     "model": "Qwen3.5-2B-Q6_K.gguf",

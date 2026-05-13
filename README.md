@@ -43,7 +43,7 @@ PII is **never** sent to the cloud at any point. The cloud LLM only ever sees re
 | Backend | Python 3.12+, FastAPI, Instructor, any-llm-sdk, Google GenAI, uvicorn |
 | Frontend | React, TypeScript, Vite, Bun, Zustand |
 | Communication | SSE (Server-Sent Events) |
-| LLM providers | OpenAI-compatible endpoints through LiteLLM, plus Google GenAI |
+| LLM providers | OpenAI-compatible endpoints through any-llm-sdk, plus Google GenAI |
 
 ---
 
@@ -87,11 +87,11 @@ bun dev
 ```
 
 **Windows:**
-```batch
-start.bat
+```powershell
+./start.ps1
 ```
 
-`start.sh` / `start.bat` check prerequisites, kill any existing processes on the required ports, then start both backend and frontend. Press any key (`Ctrl+C` on Linux/macOS) to stop both.
+`start.sh` / `start.ps1` check prerequisites, kill any existing processes on the required ports, then start both backend and frontend. Press `Ctrl+C` to stop both.
 
 ---
 
@@ -109,9 +109,6 @@ Edit `config.json` at the project root to set your model endpoints and options.
     "temperature": 0.1,
     "timeout": 30,
     "max_tokens": 1024,
-    "output_mode": "tool",
-    "verify_reconstruction": false,
-    "verification_timeout": 8,
     "extra_body": {
       "chat_template_kwargs": { "enable_thinking": true }
     }
@@ -138,12 +135,10 @@ Set `simulate_cloud: true` to use the local detection model for both detection a
 | Value | Use when |
 |---|---|
 | `openai` | The endpoint speaks OpenAI-compatible chat completions. Use this for NVIDIA NIM, llama.cpp, Ollama, LM Studio, and similar APIs. |
-| `genai` | The model should be called through the Google GenAI SDK. Leave `base_url` empty and use a model id like `gemma-4-26b-a4b-it`. |
-| `other` | You want LiteLLM's native provider routing and will include the provider in the model id yourself. |
+| `google` | The model should be called through the Google GenAI SDK. Leave `base_url` empty and use a model id like `gemma-4-26b-a4b-it`. |
+| `other` | You want any-llm-sdk native provider routing and will include the provider in the model id yourself. |
 
-For `genai`, CloakChat uses the official Google GenAI chat flow for streaming. For Gemma models, system instructions are folded into the first user message because Gemma's chat format does not support a separate `system` role.
-
-`verify_reconstruction` enables the extra local LLM check after reconstruction. Keep it `false` for faster chat with slow models; set it to `true` when debugging replacement leaks.
+For `google`, CloakChat uses the official Google GenAI chat flow for streaming. For Gemma models, system instructions are folded into the first user message because Gemma's chat format does not support a separate `system` role.
 
 Use a fast structured-output model for `detection`, such as `gemini-2.5-flash-lite` on Google GenAI. Larger instruction-tuned chat models can time out during PII detection because detection requires schema/tool output before the cloud chat call starts.
 
@@ -170,7 +165,7 @@ Any key in the `detection` or `cloud` objects that is not a known CloakChat opti
 }
 ```
 
-Known detection keys absorbed by CloakChat: `model`, `base_url`, `api_key`, `provider_type`, `temperature`, `max_tokens`, `verify_reconstruction`, `verification_timeout`, `output_mode`, `tool_mode`, and `strict`. Everything else is forwarded as model settings.
+Known detection keys absorbed by CloakChat: `model`, `base_url`, `api_key`, `provider_type`, `temperature`, `max_tokens`, `output_mode`, `tool_mode`, and `strict`. Everything else is forwarded as model settings.
 
 `timeout` is supported for both detection and cloud models. For Google GenAI this is passed into the SDK HTTP client, which helps the app fail faster instead of appearing stuck behind a long provider wait.
 
@@ -178,18 +173,8 @@ Known detection keys absorbed by CloakChat: `model`, `base_url`, `api_key`, `pro
 
 ```env
 DETECTION_API_KEY=...
-CLOUD_API_KEY=...
-DETECTION_BASE_URL=...
 CLOUD_BASE_URL=...
 ```
-
-### Detection `output_mode`
-
-| Value | When to use |
-|---|---|
-| `tool` | PydanticAI tool-output mode. Best default for Nemotron, Qwen, DeepSeek, and OpenAI-compatible tool calling. |
-| `prompted` | Schema-in-prompt JSON mode for endpoints that cannot use tool calls. |
-| `native` | Provider-native JSON schema output when the endpoint supports it. |
 
 ---
 
@@ -206,7 +191,7 @@ The backend logs every request, pipeline step, and error to the terminal in real
 14:32:03 | cloakchat.llm        | INFO     | [CLOUD_LLM] Stream finished. Chunks received: 42
 ```
 
-Full tracebacks are printed on any crash. If you run via `start.bat`, the backend terminal shows all of this directly.
+Full tracebacks are printed on any crash. If you run via `start.ps1`, the backend terminal shows all of this directly.
 
 ---
 
@@ -246,7 +231,7 @@ cloakchat/
 ├── config.json          # Runtime configuration (gitignored)
 ├── requirements.txt     # Pinned Python dependencies
 ├── start.sh             # One-command start (Linux/macOS)
-├── start.bat            # One-command start (Windows)
+├── start.ps1            # One-command start (Windows)
 └── docs.md              # Full technical documentation
 ```
 

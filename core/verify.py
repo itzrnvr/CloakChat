@@ -84,13 +84,21 @@ def verify_reconstruction(
             "notes": "No entity map entries to verify.",
         }
 
+    # Skip verification for non-Google providers (only Google GenAI supports native structured output)
+    if provider != "google":
+        return {
+            "valid": True,
+            "corrected_text": deanonymized_text,
+            "leaks": [],
+            "notes": f"Verification skipped for provider '{provider}' (Google GenAI only).",
+        }
+
     client = _get_client(api_key)
     payload = {
         "cloud_response": cloud_response,
         "deanonymized_text": deanonymized_text,
         "entity_map_original_to_placeholder": entity_map,
     }
-
     append_debug_trace(
         "reconstruction_verifier_request",
         {"model": model, "input": payload},

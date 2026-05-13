@@ -3,6 +3,12 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class EntityMap(BaseModel):
+    """Bidirectional PII mapping: forward (original→placeholder), reverse (placeholder→original)."""
+    forward: dict[str, str] = Field(default_factory=dict)
+    reverse: dict[str, str] = Field(default_factory=dict)
+
+
 class Replacement(BaseModel):
     original: str = Field(description="Exact substring from user input")
     replacement: str = Field(description="Realistic fictional substitute")

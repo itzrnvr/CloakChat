@@ -14,40 +14,15 @@ The core pipeline follows these steps:
 
 ## Modules
 
-- `detect.py`: Interface with the local LLM using native structured output via GenAI schema (or Instructor for OpenAI providers) for structured PII detection and reconstruction verification.
-- `pipeline.py`: Orchestrates the full process, providing both synchronous (`run`) and streaming (`run_streaming`) entry points.
+- `detect.py`: Interface with the local LLM using native structured output via GenAI schema (or Instructor for OpenAI providers) for structured PII detection.
+- `pipeline.py`: Orchestrates the full process via streaming (`run_streaming`) entry point.
 - `anonymize.py`: Logic for applying entity replacements, restoring original values from placeholders, and quality assurance checks for the anonymization process.
-- `cloud.py`: Factory for creating OpenAI-compatible LLM clients.
-- `types.py`: Shared data classes (Replacement, EntityMap, PipelineResult).
+- `cloud.py`: Streaming cloud LLM client via any-llm-sdk.
+- `verify.py`: Reconstruction quality verification.
+- `fake_data.py`: Realistic fictional replacement generator.
+- `types.py`: Shared data classes (Replacement, EntityMap, DetectionResult, Ambiguity, VerificationResult).
 
 ## Usage
-
-### Simple Synchronous Pipeline
-
-```python
-from core import run
-from core.cloud import stream_cloud
-
-detection_cfg = {
-    "model": "your-model",
-    "base_url": "http://localhost:8000/v1",
-    "api_key": "local"
-}
-
-# Dummy cloud LLM for illustration
-def dummy_cloud_llm(messages):
-    yield "Hello Marcus!"
-
-result = run(
-    text="Hello John!",
-    detection_cfg=detection_cfg,
-    cloud_llm=dummy_cloud_llm,
-    system_prompt="Anonymize PII."
-)
-
-print(result.anonymized_text)  # "Hello Marcus!"
-print(result.reconstructed)    # "Hello John!"
-```
 
 ### Streaming Pipeline (Multi-turn)
 

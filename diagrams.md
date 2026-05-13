@@ -14,53 +14,60 @@ flowchart TD
         direction TB
         ChatUI["Chat Interface\nMessage List + Input Box"]
         XRay["X-Ray Panel\nPipeline Trace Visualizer"]
-        Store["Zustand App Store\nmessages · anonymizedHistory · entityMap · traceGroups"]
-        Hooks["useChat.ts + useSSE.ts\nSSE client & session updater"]
+        Store["Zustand App Store\nmessages · anonymizedHistory · entityMap · traceGroups · pendingClarification"]
+        Hooks["useChat.ts + useSSE.ts + useSessions.ts\nSSE client, session CRUD, config"]
     end
 
     subgraph BE["BACKEND — FastAPI · Python 3.12 · Uvicorn"]
         direction TB
-        Config["config.py\nLoads config.json + env var overrides"]
+        Config["backend/config.py\nLoads config.json + env var overrides + user_settings.json"]
         ChatRoute["POST /api/chat — SSE Streaming"]
-        ConfigRoute["GET /api/config — Masked Keys"]
+        ClarifyRoute["POST /api/chat/clarify — Re-run with playbook"]
+        ConfigRoute["GET/PUT /api/config — Key round-trip"]
+        SessionRoute["GET/POST/DELETE /api/sessions — CRUD"]
+        PlaybookRoute["Playbook persistence\ndata/playbook.json"]
     end
 
     subgraph CORE["CORE PIPELINE — Pure Python"]
         direction TB
         Pipeline["pipeline.py — Orchestrator"]
-        Detection["detect.py — PII Detection"]
+        Detection["detect.py — PII Detection\nnative GenAI structured output / Instructor"]
         Replacement["anonymize.py — Anonymization"]
-        Validation["anonymize.py — Quality Check (validate function)"]
-        Reconstruction["anonymize.py — PII Restoration (reconstruct function)"]
-        LLMFactory["cloud.py — OpenAI-compatible Streaming"]
-        Types["types.py — Replacement · EntityMap · PipelineResult"]
+        Validation["anonymize.py — Validation (validate)"]
+        Reconstruction["anonymize.py — Restoration (reconstruct)"]
+        Verification["verify.py — Leak Check (verify_reconstruction)"]
+        LLMFactory["cloud.py — any-llm-sdk Streaming"]
+        Types["types.py — EntityMap · Replacement · Ambiguity · PlaybookEntry · VerificationResult"]
     end
 
-    LocalLLM(["🔒 Local LLM\nllama.cpp / Ollama\nOpenAI-compatible :8000/v1\nNEVER sees real PII"])
-    CloudLLM(["☁️ Cloud LLM\nOpenAI / any compatible API\nOnly sees fake substitutes"])
+    LocalLLM(["🔒 Local LLM\nllama.cpp / Ollama / Google GenAI\nNEVER sees real PII"])
+    CloudLLM(["☁️ Cloud LLM\nOpenAI / Google Gemini / Anthropic\nOnly sees fake substitutes"])
 
     A --> ChatUI
     ChatUI --> Hooks
     Hooks --> Store
     Hooks -->|"POST message + history + entity_map"| ChatRoute
-    ConfigRoute -->|"masked config JSON"| Store
+    ConfigRoute -->|"config JSON"| Store
 
     Config --> ChatRoute
     Config --> ConfigRoute
     ChatRoute --> Pipeline
+    ChatRoute --> ClarifyRoute
+    SessionRoute -->|"data/sessions.json"| PlaybookRoute
 
     Pipeline --> Detection
     Pipeline --> Replacement
     Pipeline --> Validation
     Pipeline --> Reconstruction
+    Pipeline --> Verification
     Pipeline --> LLMFactory
     Detection --> Types
     Replacement --> Types
     Reconstruction --> Types
+    Verification --> Types
 
-    LLMFactory -->|"non-streaming tool calling"| LocalLLM
     LLMFactory -->|"streaming chunks"| CloudLLM
-    Detection -->|"PII detection calls"| LocalLLM
+    Detection -->|"structured output call"| LocalLLM
 
     CloudLLM -->|"streamed response"| Reconstruction
     ChatRoute -->|"SSE events stream"| Hooks
@@ -75,54 +82,56 @@ flowchart TD
 flowchart TD
     A([👤 User sends message]) --> B["Frontend\nuseChat.ts\n\nSend POST /api/chat\n{ message, history, entity_map }"]
 
-    B --> C["Backend\nroutes/chat.py\n\nCreate detection & cloud LLMs\nfrom config.json"]
+    B --> C["Backend\nroutes/chat.py\n\nNormalize config (_normalize_cfg)\nCreate detection & cloud LLM clients"]
 
     C --> D["core/pipeline.py\nrun_streaming()"]
 
-    D --> E["core/detect.py\ndetect_pii_with_agent()\n\nnative GenAI structured output (or Instructor for OpenAI providers) detection\nSkips already-known entities\nin existing entity_map"]
+    D --> E1["SSE: step 'Detecting sensitive info'"]
 
-    E --> F{"New PII\nfound?"}
+    E1 --> F["core/detect.py\ndetect()\n\nnative GenAI structured output (or Instructor for OpenAI)\nSkips already-known entities in existing entity_map"]
 
-    F -->|"Yes"| G["core/anonymize.py\napply_replacements()\n\nReplace original PII with\nrealistic fake substitutes\ne.g. John → Marcus\njohn@corp.com → marcus@placeholder.com"]
-    F -->|"No new PII"| H["Keep text as-is\n(existing map still applies)"]
+    F --> G{"Ambiguities\nfound?"}
 
-    G --> I["core/anonymize.py\nvalidate()\n\nCheck no original PII remains\nin anonymized text\nVerify map consistency"]
-    H --> I
+    G -->|"Yes"| H["SSE: clarification_required\nFrontend shows dialog\nUser chooses keep / anonymize / remember"]
+    H --> I["POST /api/chat/clarify\nPlaybook updated\nRe-run detection with playbook"]
+    I --> F
 
-    I --> J{"Validation\nPassed?"}
-    J -->|"Errors"| K["🔴 Emit validation event\nwith errors list\n(stream continues)"]
-    J -->|"Valid"| L["🟢 Emit validation event\nvalid=true"]
-    K --> M
-    L --> M
+    G -->|"No"| J["SSE: detection\nLists new non-ambiguous PII replacements"]
 
-    M["Build cloud messages\n\nanonymizedHistory (prior turns)\n+ current anonymized message"]
+    J --> K["core/anonymize.py\napply_replacements()\n\nReplace original PII with\nrealistic fake substitutes\ne.g. John → Marcus"]
 
-    M --> N["core/cloud.py → Cloud LLM\n\nSend ONLY anonymized content\nCloud NEVER sees real PII\nStreaming mode"]
+    K --> L["SSE: anonymized\nShows sanitized text"]
+    L --> M["core/anonymize.py\nvalidate()\n\nCheck no original PII remains\nAlways emits event; never blocks pipeline"]
+    M --> N["SSE: validation\n{valid, errors}"]
 
-    N --> O["Stream cloud response chunks\n→ Emit cloud_chunk SSE events\n→ Frontend renders in real-time"]
+    N --> O["SSE: step 'Sending anonymized prompt'"]
+    O --> P["SSE: cloud_prompt\nShows full message stack (system + history + current)"]
 
-    O --> P["core/anonymize.py\nreconstruct()\n\nSwap placeholders → originals\nUsing full session EntityMap\n(prior turns + current turn)"]
+    P --> Q["core/cloud.py → Cloud LLM\nSend ONLY anonymized content\nCloud NEVER sees real PII"]
 
-    P --> Q["core/detect.py\nverify_reconstruction_with_agent()\n\nLocal model checks for leaks\nand corrects deanonymization"]
+    Q --> R["SSE: cloud_chunk per token\nFrontend renders in real-time"]
 
-    Q --> R["Emit reconstruction SSE event\nFinal response with real names\nshown to user"]
+    R --> S["SSE: step 'Reconstructing final response'"]
+    S --> T["core/anonymize.py\nreconstruct()\n\nSwap placeholders → originals\nUsing full session EntityMap"]
+    T --> U["SSE: reconstruction\n{ text, entity_map }"]
 
-    R --> S["Emit reconstruction_verification event\nvalid: bool, leaks: list"]
+    U --> V["SSE: step 'Verifying reconstruction'"]
+    V --> W["core/verify.py\nverify_reconstruction()\n\nLocal model checks for placeholder leaks\nReturns {valid, corrected_text, leaks, notes}"]
 
-    S --> T["Emit entity_map_update event\nnew_entries: { original: placeholder }\nanonymized_message: string"]
+    W --> X["SSE: reconstruction_verification\n{valid, corrected_text, leaks, notes}"]
+    X --> Y{"Verification\ncorrected text?"}
+    Y -->|"Yes"| Z["SSE: reconstruction\n(with corrected_text)"]
+    Y -->|"No"| AA["SSE: entity_map_update\n{new_entries, anonymized_message}"]
+    Z --> AA
 
-    T --> U["Emit done event"]
-
-    U --> V["Frontend on done:\nupdateSession()\n• Append anonymized turns to history\n• Merge new entries into entityMap\n• Update X-Ray trace panel"]
-
-    V --> W([✅ Ready for next turn])
+    AA --> AB["SSE: done\nFrontend updates session state"]
+    AB --> AC([✅ Ready for next turn])
 
     style A fill:#7c3aed,color:white
-    style W fill:#059669,color:white
-    style N fill:#dc2626,color:white
-    style K fill:#b91c1c,color:white
-    style L fill:#065f46,color:white
-    style G fill:#1e40af,color:white
+    style AC fill:#059669,color:white
+    style Q fill:#dc2626,color:white
+    style H fill:#b91c1c,color:white
+    style K fill:#1e40af,color:white
 ```
 
 ---
@@ -139,33 +148,40 @@ flowchart TD
 
     S1 -->|"Backend starts pipeline"| S2
 
-    S2["DETECTING\ndetect_pii_with_agent called\nExisting entity_map passed in:\n→ Skip already-known entities\n→ Never reuse existing placeholders"]
+    S2["DETECTING\ndetect() called\nExisting entity_map passed in:\n→ Skip already-known entities\n→ Reuse existing placeholders for same entities"]
 
-    S2 -->|"Returns new Replacement list"| S3
+    S2 -->|"Returns DetectionResult"| S3
 
-    S3["REPLACING\napply_replacements merges existing + new\nAnonymized text produced\nEntityMap updated"]
+    S3{"Ambiguities\nfound?"}
 
-    S3 -->|"Anonymized text ready"| S4
+    S3 -->|"Yes"| SA["AWAITING CLARIFICATION\nSSE: clarification_required\nUser chooses keep / anonymize\nSSE: playbook_updated (if remembered)"]
+    SA -->|"Re-run with playbook"| S2
 
-    S4["VALIDATING\nvalidate checks:\n• No original PII remains in text\n• Forward/reverse map is consistent\nEmits SSE: detection, anonymized, validation"]
+    S3 -->|"No"| S4
 
-    S4 -->|"Validation passed"| S5
+    S4["REPLACING\napply_replacements merges existing + new\nAnonymized text produced\nEntityMap updated"]
 
-    S5["CLOUD STREAMING\nCloud LLM receives:\n→ Prior anonymized history turns\n→ Current anonymized message\nReal PII never leaves the device\nEmits SSE: cloud_chunk per token"]
+    S4 -->|"Anonymized text ready"| S5
 
-    S5 -->|"Stream complete"| S6
+    S5["VALIDATING\nvalidate() checks:\n• No original PII remains in text\n• Forward/reverse map is consistent\nEmits SSE: detection, anonymized, validation"]
 
-    S6["RECONSTRUCTING\nreconstruct swaps placeholders → originals\nUses merged map: prior turns + current turn"]
+    S5 -->|"Validation passed (or failed — stream continues)"| S6
 
-    S6 -->|"Local model verifies response"| S7
+    S6["CLOUD STREAMING\nCloud LLM receives:\n→ CLOUD_SYSTEM_PROMPT + prior anonymized history + current anonymized message\nReal PII never leaves the device\nEmits SSE: cloud_chunk per token"]
 
-    S7["VERIFYING\nverify_reconstruction_with_agent\nchecks for leaks and corrects text\nEmits SSE: reconstruction, reconstruction_verification"]
+    S6 -->|"Stream complete"| S7
 
-    S7 -->|"Emits entity_map_update + done"| S8
+    S7["RECONSTRUCTING\nreconstruct() swaps placeholders → originals\nUses merged map: prior turns + current turn"]
 
-    S8["UPDATING SESSION STATE\nZustand store updated:\n• messages += reconstructed reply\n• anonymizedHistory += both sides of turn\n• entityMap = merged accumulated map\n• traceGroups += new X-Ray trace"]
+    S7 -->|"Response reconstructed"| S8
 
-    S8 -->|"Ready for next turn"| START
+    S8["VERIFYING\nverify_reconstruction()\nchecks for placeholder leaks\nEmits SSE: reconstruction, reconstruction_verification"]
+
+    S8 -->|"Verification done"| S9
+
+    S9["UPDATING SESSION STATE\nZustand store updated:\n• messages += reconstructed reply\n• anonymizedHistory += both sides of turn\n• entityMap = merged accumulated map\n• traceGroups += new X-Ray trace"]
+
+    S9 -->|"Ready for next turn"| START
 ```
 
 ---
@@ -183,10 +199,21 @@ sequenceDiagram
     User->>FE: Type and send message
     FE->>BE: POST /api/chat<br/>{ message, history, entity_map }
 
-    Note over BE: Create LLM clients<br/>from config.json
+    Note over BE: _normalize_cfg()<br/>ensures provider key exists
 
-    BE->>Local: Detect PII<br/>(tool calling, non-streaming)
-    Local-->>BE: List of Replacements<br/>[{original, placeholder, entity_type}]
+    BE->>FE: SSE: step<br/>"Detecting sensitive info"
+
+    BE->>Local: Detect PII<br/>(structured output, non-streaming)
+    Local-->>BE: DetectionResult<br/>{replacements, ambiguities}
+
+    alt Ambiguities found
+        BE-->>FE: SSE: clarification_required<br/>{clarifications: [...]}
+        FE->>FE: Show clarification dialog
+        User->>FE: Choose keep / anonymize / remember
+        FE->>BE: POST /api/chat/clarify<br/>{clarification, playbook}
+        BE-->>FE: SSE: playbook_updated<br/>{entries: [...]}
+        Note over BE: Re-run pipeline with updated playbook
+    end
 
     BE-->>FE: SSE: detection<br/>{ replacements: [...] }
     FE->>FE: Update X-Ray panel
@@ -199,6 +226,10 @@ sequenceDiagram
     BE-->>FE: SSE: validation<br/>{ valid: true, errors: [] }
     FE->>FE: Update X-Ray panel
 
+    BE->>FE: SSE: step<br/>"Sending anonymized prompt"
+
+    BE->>FE: SSE: cloud_prompt<br/>{messages: [...], history_turns: N}
+
     BE->>Cloud: Full anonymized conversation<br/>(streaming)
 
     loop Streaming chunks
@@ -207,11 +238,20 @@ sequenceDiagram
         FE->>FE: Render streaming text
     end
 
-    Note over BE: verify_reconstruction_with_agent()
-    BE-->>FE: SSE: reconstruction<br/>{ text: "Wishing john and mandy..." }
+    BE->>FE: SSE: step<br/>"Reconstructing final response"
+
+    Note over BE: reconstruct()
+    BE-->>FE: SSE: reconstruction<br/>{ text: "Wishing john and mandy...", entity_map }
     FE->>FE: Show final response to user
 
-    BE-->>FE: SSE: reconstruction_verification<br/>{ valid: true, leaks: [] }
+    BE->>FE: SSE: step<br/>"Verifying reconstruction"
+
+    Note over BE: verify_reconstruction()
+    BE-->>FE: SSE: reconstruction_verification<br/>{ valid: true, corrected_text: "", leaks: [] }
+
+    alt Verification corrected text
+        BE-->>FE: SSE: reconstruction<br/>{ text: corrected_text, entity_map }
+    end
 
     BE-->>FE: SSE: entity_map_update<br/>{ new_entries, anonymized_message }
 
@@ -229,8 +269,17 @@ sequenceDiagram
 classDiagram
     class Replacement {
         +str original
-        +str placeholder
+        +str replacement
         +str entity_type
+        +str reason
+    }
+
+    class Ambiguity {
+        +str original
+        +str entity_type
+        +str reason_includes_public_figure_like_hint
+        +str suggested_replacement
+        +list options
     }
 
     class EntityMap {
@@ -238,14 +287,26 @@ classDiagram
         +dict reverse
     }
 
-    class PipelineResult {
-        +str original_text
-        +str anonymized_text
-        +str cloud_response
-        +str reconstructed
-        +EntityMap entity_map
-        +list~Replacement~ replacements
-        +dict validation
+    class PlaybookEntry {
+        +str original
+        +str entity_type
+        +str action
+        +str resolution
+        +str replacement
+        +str note
+        +str updatedAt
+    }
+
+    class VerificationResult {
+        +bool valid
+        +str corrected_text
+        +list leaks
+        +str notes
+    }
+
+    class DetectionResult {
+        +list replacements
+        +list ambiguities
     }
 
     class Config {
@@ -254,33 +315,28 @@ classDiagram
         +dict server
         +bool simulate_cloud
         +str system_prompt
+        +str user_context
     }
 
-    class AppStore {
+    class AppState {
         +Message[] messages
+        +TraceEvent[] traceEvents
+        +TraceGroup[] traceGroups
         +dict[] anonymizedHistory
         +dict entityMap
-        +TraceGroup[] traceGroups
-        +sendMessage()
-        +updateSession()
+        +ClarificationRequest pendingClarification
+        +str currentRequestId
+        +str cloudStreamingContent
+        +SessionSummary[] sessions
+        +AppConfig config
+        +str status
+        +str statusMessage
     }
 
-    class SSEEvent {
-        <<enumeration>>
-        detection
-        anonymized
-        validation
-        cloud_chunk
-        reconstruction
-        reconstruction_verification
-        entity_map_update
-        done
-    }
-
-    PipelineResult --> EntityMap
-    PipelineResult --> Replacement
-    AppStore --> SSEEvent : listens to
-    Config --> PipelineResult : configures
+    DetectionResult --> Replacement
+    DetectionResult --> Ambiguity
+    AppState --> EntityMap
+    Config --> AppState : configures
 ```
 
 ---
@@ -291,47 +347,59 @@ classDiagram
 graph LR
     subgraph "Backend Layer"
         main["backend/main.py\nFastAPI + Uvicorn"]
-        cfg["backend/config.py\nConfig loader"]
-        chat["backend/routes/chat.py\nPOST /api/chat"]
-        configRoute["backend/routes/config.py\nGET /api/config"]
+        cfg["backend/config.py\nConfig loader + user_settings.json"]
+        chat["backend/routes/chat.py\nPOST /api/chat /chat/clarify"]
+        configRoute["backend/routes/config.py\nGET/PUT /api/config"]
+        sessions["backend/routes/sessions.py\nGET/POST/DELETE /api/sessions"]
+        playbook["backend/playbook.py\nLoad/save data/playbook.json"]
+        debug["backend/debug_trace.py\nJSONL debug trace"]
+        deps["backend/deps.py\nDependency injection"]
     end
 
     subgraph "Core Layer"
         pipeline["core/pipeline.py\nOrchestrator"]
-        detection["core/detect.py"]
-        replacement["core/anonymize.py"]
-        validate["core/anonymize.py"]
-        reconstruction["core/anonymize.py"]
-        llm["core/cloud.py\nOpenAI-compatible streaming"]
-        types["core/types.py"]
+        detection["core/detect.py\nPII detection (GenAI / Instructor)"]
+        replacement["core/anonymize.py\nApply + reconstruct + validate"]
+        verification["core/verify.py\nLeak check via GenAI"]
+        llm["core/cloud.py\nany-llm-sdk streaming"]
+        fake["core/fake_data.py\nFaker fallback"]
+        types["core/types.py\nPydantic models"]
     end
 
     subgraph "Frontend Layer"
         App["App.tsx"]
         ChatComp["components/chat/"]
         XRayComp["components/xray/"]
-        Sidebar["components/sidebar/"]
+        Sidebar["components/sidebar/\nConfigPanel"]
         useChat["hooks/useChat.ts"]
         useSSE["hooks/useSSE.ts"]
+        useSessions["hooks/useSessions.ts"]
+        useConfig["hooks/useConfig.ts"]
         appStore["stores/appStore.ts\nZustand"]
     end
 
     main --> chat
     main --> configRoute
+    main --> sessions
     main --> cfg
     chat --> pipeline
     chat --> cfg
+    chat --> playbook
     configRoute --> cfg
+    sessions --> debug
+    deps --> cfg
+    deps --> playbook
 
     pipeline --> detection
     pipeline --> replacement
-    pipeline --> validate
-    pipeline --> reconstruction
+    pipeline --> verification
     pipeline --> llm
+    pipeline --> types
     detection --> types
     replacement --> types
-    reconstruction --> types
-    pipeline --> types
+    verification --> types
+    llm --> fake
+    fake --> types
 
     App --> ChatComp
     App --> XRayComp
@@ -339,7 +407,10 @@ graph LR
     ChatComp --> useChat
     useChat --> useSSE
     useChat --> appStore
+    useSessions --> appStore
+    useConfig --> appStore
     XRayComp --> appStore
+    Sidebar --> useConfig
 
     style main fill:#1e3a5f,color:white
     style pipeline fill:#1a472a,color:white
@@ -355,7 +426,8 @@ graph LR
 |---|---|
 | **Privacy Guarantee** | Real PII is detected and replaced *locally*; cloud LLM only sees realistic fake substitutes |
 | **Multi-turn Safety** | `entity_map` accumulates across turns — same person always maps to same placeholder |
+| **Clarification** | Ambiguous entities (especially person names) trigger user dialog; decisions remembered in playbook |
 | **Communication** | SSE (Server-Sent Events) for real-time streaming end-to-end |
-|| **LLM Abstraction** | native GenAI structured output (or Instructor for OpenAI providers) handles typed detection; OpenAI-compatible client handles streaming chat |
-| **Frontend State** | Zustand manages session: reconstructed messages, anonymized history, and entity map |
-| **Observability** | X-Ray panel shows every pipeline step live: detection, anonymization, validation, cloud output, reconstruction, verification |
+| **LLM Abstraction** | native GenAI structured output for detection; any-llm-sdk for cloud streaming; Instructor as OpenAI fallback |
+| **Frontend State** | Zustand manages: reconstructed messages, anonymized history, entity map, trace groups, pending clarifications |
+| **Observability** | X-Ray panel shows every pipeline step live: detection, anonymization, validation, cloud output, reconstruction, verification, clarification |

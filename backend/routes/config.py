@@ -11,11 +11,11 @@ _PROVIDER_MAP = {"google": "genai", "openai": "openai", "anthropic": "openai"}
 
 def _to_frontend(cfg: Config) -> dict:
     """Return merged config mapping internal 'model' to frontend 'model_id'."""
-    det_provider = cfg.detection.get("provider", "openai")
+    det_provider = cfg.detection.get("provider") or cfg.detection.get("provider_type", "openai")
     det_type = _PROVIDER_MAP.get(det_provider, "openai")
     det = {"provider_type": det_type, **cfg.detection, "model_id": cfg.detection.get("model", "")}
 
-    cloud_provider = cfg.cloud.get("provider", "openai")
+    cloud_provider = cfg.cloud.get("provider") or cfg.cloud.get("provider_type", "openai")
     cloud_type = _PROVIDER_MAP.get(cloud_provider, "openai")
     cloud = {"provider_type": cloud_type, **cfg.cloud, "model_id": cfg.cloud.get("model", "")}
 

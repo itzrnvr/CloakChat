@@ -33,6 +33,16 @@ def _build_system_prompt(config: Config) -> str:
     return prompt
 
 
+_PROVIDER_TYPE_MAP = {"genai": "google", "openai": "openai"}
+
+def _normalize_cfg(cfg: dict) -> dict:
+    """Sync provider from provider_type so UI settings always win."""
+    if "provider_type" in cfg:
+        cfg = dict(cfg)
+        cfg["provider"] = _PROVIDER_TYPE_MAP.get(cfg["provider_type"], cfg["provider_type"])
+    return cfg
+
+
 def _sse_stream(pipeline_events, req_id: str):
     for event in pipeline_events:
         logger.info("[PIPELINE] Event type=%s", event.get("type"))
@@ -155,8 +165,8 @@ async def chat(
         try:
             pipeline = run_streaming(
                 text=request.message,
-                detection_cfg=config.detection,
-                cloud_cfg=config.cloud,
+                detection_cfg=_normalize_cfg(config.detection),
+                cloud_cfg=_normalize_cfg(config.cloud),
                 system_prompt=_build_system_prompt(config),
                 history=request.history,
                 entity_map=request.entity_map or None,
@@ -220,8 +230,8 @@ async def clarify(
         try:
             pipeline = run_streaming(
                 text=request.message,
-                detection_cfg=config.detection,
-                cloud_cfg=config.cloud,
+                detection_cfg=_normalize_cfg(config.detection),
+                cloud_cfg=_normalize_cfg(config.cloud),
                 system_prompt=_build_system_prompt(config),
                 history=request.history,
                 entity_map=request.entity_map or None,

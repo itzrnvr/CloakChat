@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import re
 
-from core.types import Replacement
+from core.types import EntityMap, Replacement
 
 
 def apply_replacements(
     text: str,
     replacements: list[Replacement],
     existing_map: dict[str, str],
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str, EntityMap]:
     """Apply replacements + existing map. Returns (anonymized_text, full_entity_map)."""
     forward = dict(existing_map)
 
@@ -24,17 +24,17 @@ def apply_replacements(
             forward[r.original] = r.replacement
 
     reverse = {v: k for k, v in forward.items()}
-    return text, {"forward": forward, "reverse": reverse}
+    return text, EntityMap(forward=forward, reverse=reverse)
 
 
-def reconstruct(text: str, entity_map: dict[str, str]) -> str:
+def reconstruct(text: str, entity_map: EntityMap | dict[str, str]) -> str:
     """Restore original PII values in cloud response.
 
     Handles case variations: the cloud may render Person_1 as PERSON_1,
     person_1, Person1, etc. We match case-insensitively and restore with
     the original casing.
     """
-    reverse = entity_map.get("reverse", {})
+    reverse = entity_map.reverse if isinstance(entity_map, EntityMap) else entity_map.get("reverse", {})
     for placeholder in sorted(reverse, key=len, reverse=True):
         original = reverse[placeholder]
         # Handle possessives first (longer match)
@@ -48,11 +48,12 @@ def reconstruct(text: str, entity_map: dict[str, str]) -> str:
     return text
 
 
-def validate(anonymized: str, entity_map: dict[str, str]) -> dict:
+def validate(anonymized: str, entity_map: EntityMap | dict[str, str]) -> dict:
     """Check no original PII remains in anonymized text."""
+    forward = entity_map.forward if isinstance(entity_map, EntityMap) else entity_map.get("forward", {})
     errors = [
         f"PII remains: {original!r}"
-        for original in entity_map.get("forward", {})
+        for original in forward
         if original in anonymized
     ]
     return {"valid": not errors, "errors": errors}

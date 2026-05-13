@@ -128,7 +128,7 @@ export function ConfigPanel({ config, onConfigChange }: ConfigPanelProps) {
               <Input
                 value={localConfig.cloud.model_id}
                 onChange={(e) => updateCloud({ model_id: e.target.value })}
-                placeholder="gpt-4o or gemini/gemini-pro"
+                placeholder="your-cloud-model"
                 className="h-8 text-xs font-mono"
               />
             </div>

@@ -49,9 +49,9 @@ Provider types:
 | `google` | Google GenAI SDK. Use the Google API key and leave `base_url` empty. |
 | `other` | any-llm-sdk native provider routing; include the provider in the model id. |
 
-For `google`, CloakChat streams through the official Google GenAI chat API. For Gemma models, any system instruction is merged into the first user turn because Gemma does not support a separate `system` role.
+For `google`, CloakChat streams through the official Google GenAI chat API. For some models, any system instruction is merged into the first user turn because the model does not support a separate `system` role.
 
-For Google GenAI, prefer a fast model like `gemini-2.5-flash-lite` for `detection`. Detection uses structured output, so it should be optimized for latency; the larger creative/chat model can still be used under `cloud`.
+For Google GenAI, prefer a fast structured-output model for `detection`. Detection uses structured output, so it should be optimized for latency; the larger creative/chat model can still be used under `cloud`.
 
 ```json
 {
@@ -64,16 +64,10 @@ For Google GenAI, prefer a fast model like `gemini-2.5-flash-lite` for `detectio
 }
 ```
 
-Known keys (absorbed by CloakChat, not forwarded): `model`, `base_url`, `api_key`, `provider_type`, `temperature`, `timeout`, `max_tokens`, `output_mode`, `tool_mode`, `strict`. Everything else is forwarded as model settings.
+Known CloakChat keys: `model`, `base_url`, `api_key`, `provider`, `provider_type`, `temperature`, `timeout`, `max_tokens`. These are used by CloakChat for routing and request setup. Everything else is forwarded as model settings.
 
 **Env var overrides:** `DETECTION_API_KEY`, `CLOUD_BASE_URL`
 
-### `output_mode` options
-
-| Value | Description |
-|---|---|
-| `tool` | OpenAI-compatible tool calling mode. Best default for endpoints with tool support. |
-| `native` | Provider-native JSON schema output when supported. |
 
 ### Placeholder style
 
@@ -119,7 +113,7 @@ detect(text, provider, model, api_key, base_url, system_prompt, playbook, existi
 Applies replacements to text, restores original PII in cloud responses, and validates anonymization quality.
 
 ```python
-apply_replacements(text, replacements, existing_map=None) -> (anonymized_text, full_entity_map)
+apply_replacements(text, replacements, existing_map=None) -> tuple[str, EntityMap]
 ```
 
 - Sorts by original length (longest first) to prevent partial replacements
@@ -127,7 +121,7 @@ apply_replacements(text, replacements, existing_map=None) -> (anonymized_text, f
 - Returns anonymized text and bidirectional entity map (`forward` and `reverse`)
 
 ```python
-reconstruct(text, entity_map) -> str
+reconstruct(text, entity_map: EntityMap | dict[str, str]) -> str
 ```
 
 - Replaces placeholders with originals using `entity_map.reverse`
@@ -166,13 +160,13 @@ run_streaming(text, detection_cfg, cloud_llm, system_prompt,
 |---|---|---|
 | `detection_reasoning` | `content: str` | Local model's thinking process during detection |
 | `clarification_required` | `entity, entity_type, question, options` | User clarification needed before continuing |
-| `detection` | `replacements: [{original, placeholder, entity_type}]` | New PII found this turn |
+| `detection` | `replacements: [{original, replacement, entity_type}]` | New PII found this turn |
 | `anonymized` | `text: str` | Current message after replacement |
 | `validation` | `valid: bool, errors: list[str]` | Anonymization quality check |
 | `cloud_prompt` | `messages: list[dict], history_turns: int` | Sanitized prompt sent to cloud LLM |
 | `cloud_chunk` | `content: str` | Streaming response chunk from cloud LLM |
 | `reconstruction` | `text: str` | Final response with PII restored |
-| `reconstruction_verification` | `valid, leaks, notes, reasoning` | Quality check and fixes by local model |
+| `reconstruction_verification` | `valid, corrected_text, leaks, notes` | Quality check and fixes by local model |
 | `entity_map_update` | `new_entries: dict` | New original→placeholder entries from this turn |
 | `error` | `content: str` | Pipeline failure (e.g., detection failed) |
 | `done` | — | Stream complete |
@@ -230,7 +224,7 @@ The backend logs every request, every pipeline step, and full tracebacks on cras
 ```
 14:32:01 | cloakchat.chat       | INFO     | [REQUEST] POST /api/chat
 14:32:01 | cloakchat.chat       | INFO     | [REQUEST] Message: 'john weds mandy'
-14:32:01 | cloakchat.llm        | INFO     | [DETECTION_LLM] model=openai/Qwen3.5-2B-Q6_K.gguf ...
+14:32:01 | cloakchat.llm        | INFO     | [DETECTION_LLM] model=openai/your-local-model ...
 14:32:02 | cloakchat.chat       | INFO     | [DETECTION] Found 2 new PII replacements
 14:32:02 | cloakchat.chat       | INFO     | [ANONYMIZED] 'Marcus weds Claire'
 14:32:03 | cloakchat.llm        | INFO     | [CLOUD_LLM] Stream finished. Chunks received: 42

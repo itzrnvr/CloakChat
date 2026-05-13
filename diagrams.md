@@ -271,14 +271,15 @@ classDiagram
         +str original
         +str replacement
         +str entity_type
-        +str reason
+
     }
 
     class Ambiguity {
         +str original
         +str entity_type
-        +str reason_includes_public_figure_like_hint
+        +str reason
         +str suggested_replacement
+        +str question
         +list options
     }
 
@@ -294,7 +295,7 @@ classDiagram
         +str resolution
         +str replacement
         +str note
-        +str updatedAt
+
     }
 
     class VerificationResult {
@@ -326,6 +327,7 @@ classDiagram
         +dict entityMap
         +ClarificationRequest pendingClarification
         +str currentRequestId
+        +str currentSessionId
         +str cloudStreamingContent
         +SessionSummary[] sessions
         +AppConfig config

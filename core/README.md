@@ -33,7 +33,7 @@ from core import run_streaming
 for event in run_streaming(
     text="My email is john@example.com",
     detection_cfg=detection_cfg,
-    cloud_llm=cloud_llm_callable,
+    cloud_cfg=cloud_cfg,
     system_prompt=system_prompt,
     history=[],  # Anonymized history
     entity_map={} # Accumulated entity map

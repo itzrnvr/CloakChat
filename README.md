@@ -116,7 +116,7 @@ Edit `config.json` at the project root to set your model endpoints and options.
   "cloud": {
     "provider_type": "openai",
     "base_url": "https://api.openai.com/v1",
-    "model": "gpt-4o",
+    "model": "your-cloud-model",
     "api_key": "sk-...",
     "temperature": 0.7,
     "timeout": 45,
@@ -135,12 +135,12 @@ Set `simulate_cloud: true` to use the local detection model for both detection a
 | Value | Use when |
 |---|---|
 | `openai` | The endpoint speaks OpenAI-compatible chat completions. Use this for NVIDIA NIM, llama.cpp, Ollama, LM Studio, and similar APIs. |
-| `google` | The model should be called through the Google GenAI SDK. Leave `base_url` empty and use a model id like `gemma-4-26b-a4b-it`. |
+| `google` | The model should be called through the Google GenAI SDK. Leave `base_url` empty and set `model` to a valid model id. |
 | `other` | You want any-llm-sdk native provider routing and will include the provider in the model id yourself. |
 
-For `google`, CloakChat uses the official Google GenAI chat flow for streaming. For Gemma models, system instructions are folded into the first user message because Gemma's chat format does not support a separate `system` role.
+For `google`, CloakChat uses the official Google GenAI chat flow for streaming. For some models, system instructions are folded into the first user message because the model's chat format does not support a separate `system` role.
 
-Use a fast structured-output model for `detection`, such as `gemini-2.5-flash-lite` on Google GenAI. Larger instruction-tuned chat models can time out during PII detection because detection requires schema/tool output before the cloud chat call starts.
+Use a fast structured-output model for `detection`. Larger instruction-tuned chat models can time out during PII detection because detection requires schema/tool output before the cloud chat call starts.
 
 ### Extra provider parameters
 
@@ -150,7 +150,7 @@ Any key in the `detection` or `cloud` objects that is not a known CloakChat opti
 {
   "detection": {
     "base_url": "http://localhost:8000/v1",
-    "model": "Qwen3.5-2B-Q6_K.gguf",
+    "model": "your-local-model.gguf",
     "temperature": 0.1,
     "extra_body": {
       "chat_template_kwargs": { "enable_thinking": false }
@@ -158,14 +158,14 @@ Any key in the `detection` or `cloud` objects that is not a known CloakChat opti
   },
   "cloud": {
     "base_url": "https://api.openai.com/v1",
-    "model": "o3-mini",
+    "model": "your-cloud-model",
     "api_key": "sk-...",
     "reasoning_budget": 16384
   }
 }
 ```
 
-Known detection keys absorbed by CloakChat: `model`, `base_url`, `api_key`, `provider_type`, `temperature`, `max_tokens`, `output_mode`, `tool_mode`, and `strict`. Everything else is forwarded as model settings.
+Known CloakChat keys: `model`, `base_url`, `api_key`, `provider`, `provider_type`, `temperature`, `timeout`, `max_tokens`. These are used by CloakChat for routing and request setup. Everything else is forwarded as model settings.
 
 `timeout` is supported for both detection and cloud models. For Google GenAI this is passed into the SDK HTTP client, which helps the app fail faster instead of appearing stuck behind a long provider wait.
 

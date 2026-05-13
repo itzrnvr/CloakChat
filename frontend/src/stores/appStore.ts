@@ -4,8 +4,8 @@ import type { AppState, TraceGroup, AppConfig, Session, SessionSummary } from '@
 const DEFAULT_CONFIG: AppConfig = {
   detection: {
     provider_type: "openai",
-    base_url: "http://moonhowler.local:8000/v1",
-    model_id: "Qwen3.5-2B-Q6_K.gguf",
+    base_url: "http://localhost:8000/v1",
+    model_id: "your-local-model.gguf",
     api_key: "",
     temperature: 0.1,
     timeout: 30,
@@ -14,8 +14,8 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   cloud: {
     provider_type: "openai",
-    base_url: "http://moonhowler.local:8000/v1",
-    model_id: "Qwen3.5-2B-Q6_K.gguf",
+    base_url: "http://localhost:8000/v1",
+    model_id: "your-cloud-model",
     api_key: "",
     temperature: 0.7,
     timeout: 45,
